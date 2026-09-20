@@ -13,6 +13,9 @@
     total: document.getElementById('totalVal'),
     critters: document.getElementById('crittersVal'),
     newRoundBtn: document.getElementById('newRoundBtn'),
+    sniffBtn: document.getElementById('sniffBtn'),
+    rewindBtn: document.getElementById('rewindBtn'),
+    shieldBtn: document.getElementById('shieldBtn'),
     winOverlay: document.getElementById('winOverlay'),
     winStats: document.getElementById('winStats'),
     winPlayAgainBtn: document.getElementById('winPlayAgainBtn'),
@@ -25,6 +28,10 @@
 
   // Placeholder balance until the real coin economy (earned from stars, persisted) lands in build-order step 4.
   let coins = 3;
+
+  // Survives round resets (that's the point of a streak shield) - there's no real streak
+  // counter to protect yet (that's build-order step 4), so this just tracks arm/consume state.
+  let streakShieldArmed = false;
 
   let state = null;
 
@@ -113,6 +120,7 @@
       revealed: 0,
       total: n * n - n,
       roundOver: false,
+      history: [],
     };
     el.total.textContent = state.total;
     el.critters.textContent = state.n;
@@ -133,6 +141,20 @@
     state.firstTapDone = true;
   }
 
+  // Sniff has no cell to guarantee safe, so it just needs any valid board - no first-tap filtering.
+  function ensureBoardResolved() {
+    if (state.firstTapDone) return;
+    const choice = state.pool[Math.floor(Math.random() * state.pool.length)];
+    state.perm = choice.perm;
+    state.grid = choice.grid;
+    state.firstTapDone = true;
+  }
+
+  function hasHiddenCritters() {
+    if (!state.firstTapDone) return true;
+    return state.perm.some((c, r) => state.cells[r][c].status === 'hidden');
+  }
+
   function toggleFlag(r, c) {
     if (state.roundOver) return;
     const cell = state.cells[r][c];
@@ -149,6 +171,8 @@
 
     if (!state.firstTapDone) resolveFirstTap(r, c);
 
+    state.history.push({ r, c, lives: state.lives, revealed: state.revealed });
+
     if (state.perm[r] === c) {
       cell.status = 'critter';
       state.lives--;
@@ -162,6 +186,40 @@
       render();
       if (state.revealed >= state.total) winRound();
     }
+  }
+
+  function useSniff() {
+    if (state.roundOver || coins < 1) return;
+    ensureBoardResolved();
+    const hidden = [];
+    for (let r = 0; r < state.n; r++) {
+      const c = state.perm[r];
+      if (state.cells[r][c].status === 'hidden') hidden.push([r, c]);
+    }
+    if (!hidden.length) return;
+    const [r, c] = hidden[Math.floor(Math.random() * hidden.length)];
+    coins--;
+    state.cells[r][c] = { status: 'critter', flagged: false };
+    updateStats();
+    render();
+  }
+
+  function useRewind() {
+    if (state.roundOver || coins < 1 || !state.history.length) return;
+    const last = state.history.pop();
+    coins--;
+    state.cells[last.r][last.c] = { status: 'hidden', flagged: false };
+    state.lives = last.lives;
+    state.revealed = last.revealed;
+    updateStats();
+    render();
+  }
+
+  function useShield() {
+    if (streakShieldArmed || coins < 1) return;
+    coins--;
+    streakShieldArmed = true;
+    updateStats();
   }
 
   function offerContinue() {
@@ -227,6 +285,10 @@
     el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(MAX_LIVES - state.lives);
     el.coins.textContent = coins;
     el.found.textContent = state.revealed;
+    el.sniffBtn.disabled = state.roundOver || coins < 1 || !hasHiddenCritters();
+    el.rewindBtn.disabled = state.roundOver || coins < 1 || !state.history.length;
+    el.shieldBtn.disabled = state.roundOver || coins < 1 || streakShieldArmed;
+    el.shieldBtn.textContent = streakShieldArmed ? 'Shield: armed 🛡️' : 'Shield · 1 🪙';
   }
 
   function render() {
@@ -279,8 +341,13 @@
 
   el.continueDeclineBtn.addEventListener('click', () => {
     el.continueOverlay.classList.add('hidden');
+    if (streakShieldArmed) streakShieldArmed = false; // shield spent protecting the streak through this reset
     startRound();
   });
+
+  el.sniffBtn.addEventListener('click', useSniff);
+  el.rewindBtn.addEventListener('click', useRewind);
+  el.shieldBtn.addEventListener('click', useShield);
 
   startRound();
 })();
