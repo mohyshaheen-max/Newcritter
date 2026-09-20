@@ -34,9 +34,8 @@ No move budget and no rationed information: every clue is always available for t
 - Grid size scales up through levels (e.g. 3×3 → 4×4 → …), with critter count always matching grid size.
 - Higher tiers bias generation toward more ✦ ties, which are genuinely harder to triangulate.
 - A later tier could add a second constraint layer (colored regions, as in Dogdoku) on top of one-per-row/column for a further difficulty jump.
-- Technical note: brute-force uniqueness checking stays instant through roughly 8×8; past that, generation should move to a constraint solver rather than checking every permutation.
-
-**Open**: exact levels-per-grid-size pacing (how many puzzles at each size before it grows) is not yet decided — see Open questions.
+- Technical note: brute-force uniqueness checking stays instant through roughly 8×8; past that, generation should move to a constraint solver rather than checking every permutation. In practice, generating a candidate is fast enough at every size up to 8×8 only by checking one random candidate against the full permutation space at a time (~n! work) rather than cross-checking every candidate against every other one (~n!² work, which is what makes 8×8 infeasible without this).
+- Progression is 3×3 → 4×4 → 5×5 → 6×6 → 7×7 → 8×8, one win per size to advance (decided 2026-09-20). A loss (declining Continue) does not demote - the round just retries at the same size.
 
 ## Power-ups
 
@@ -73,7 +72,7 @@ The free first-tap safety guarantee (see Board & generation rules) sits outside 
 
 ## Open questions still needing a decision
 
-- [ ] Levels-per-grid-size pacing — how many puzzles at each size before difficulty grows
+- [x] Levels-per-grid-size pacing — decided 2026-09-20: 1 win per size, no demotion on a loss
 - [ ] Exact star-rating thresholds (lives kept + power-ups unused → 1★/2★/3★)
 - [ ] Stars → coins conversion rate
 - [ ] Daily streak definition — any completed round, or does it require a win

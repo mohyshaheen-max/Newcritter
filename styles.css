@@ -130,8 +130,8 @@ h1 {
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(var(--grid-size, 5), minmax(44px, 58px));
-  grid-template-rows: repeat(var(--grid-size, 5), minmax(44px, 58px));
+  grid-template-columns: repeat(var(--grid-size, 3), minmax(30px, 58px));
+  grid-template-rows: repeat(var(--grid-size, 3), minmax(30px, 58px));
   gap: 5px;
   background: var(--panel);
   padding: 6px;

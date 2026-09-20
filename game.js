@@ -1,9 +1,10 @@
 (function () {
-  const GRID_SIZE = 5;
+  const MIN_GRID = 3;
+  const MAX_GRID = 8; // spec's brute-force-feasible ceiling; past this, generation needs a constraint solver instead
   const MAX_LIVES = 3;
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
-  const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻'];
+  const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻', '🦝', '🐨', '🦔'];
   const PULSE_COST = 3; // bumped from 2: on a 5x5 board a 3x3 scan can pin a 3-row block's columns almost exactly, stronger than a 1-coin Sniff
   const PULSE_MIN_GRID = 5; // per product decision: unlocks at 5x5 and above
   const DECODE_COST = 2;
@@ -31,6 +32,7 @@
     continueAdBtn: document.getElementById('continueAdBtn'),
     continueDeclineBtn: document.getElementById('continueDeclineBtn'),
     toast: document.getElementById('toast'),
+    level: document.getElementById('levelVal'),
   };
 
   let toastTimer = null;
@@ -40,7 +42,11 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.toast.classList.remove('visible'), 2400);
   }
-  document.documentElement.style.setProperty('--grid-size', GRID_SIZE);
+
+  // 0-indexed; grid size = MIN_GRID + level, capped at MAX_GRID. One win advances it (no
+  // demotion on a loss); survives round resets same as coins, since it's overall progress.
+  let level = 0;
+  function currentGridSize() { return Math.min(MIN_GRID + level, MAX_GRID); }
 
   // Bumped up for easier testing of the power-ups; real coin economy (earned from stars, persisted) lands in build-order step 4.
   let coins = 10;
@@ -103,36 +109,63 @@
   // Two permutations are "confusable" if they'd show identical clues at every cell that's
   // non-critter under BOTH of them (cells that are a critter under either one carry no
   // comparable clue, so they're skipped). A permutation only has a provably unique solution
-  // if nothing else in the candidate pool is confusable with it. This is why a genuinely
-  // forced 50/50 can still happen deep in a round: local ambiguity between two boards can
-  // exist even though each board, as a whole, maps back to exactly one arrangement.
-  function areConfusable(permA, gridA, permB, gridB, n) {
+  // if nothing else in the full permutation space is confusable with it. This is why a
+  // genuinely forced 50/50 can still happen deep in a round: local ambiguity between two
+  // boards can exist even though each board, as a whole, maps back to exactly one arrangement.
+  // permB's clue values are computed lazily per cell (not a precomputed grid) so a mismatch
+  // on an early cell - the common case for two random permutations - exits without ever
+  // computing the rest of permB's grid.
+  function isConfusablePair(permA, gridA, permB, n) {
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
         if (permA[r] === c || permB[r] === c) continue;
-        if (gridA[r][c] !== gridB[r][c]) return false;
+        const wedges = nearestWedges(permB, n, r, c);
+        const value = wedges.length > 1 ? TIE : ARROWS[wedges[0]];
+        if (gridA[r][c] !== value) return false;
       }
     }
     return true;
   }
 
-  function buildUniqueSolutionPool(n) {
-    const perms = permutationsOf(n);
-    const grids = perms.map(p => computeClueGrid(p, n));
-    const pool = [];
-    for (let i = 0; i < perms.length; i++) {
-      let confusable = false;
-      for (let j = 0; j < perms.length; j++) {
-        if (i === j) continue;
-        if (areConfusable(perms[i], grids[i], perms[j], grids[j], n)) { confusable = true; break; }
-      }
-      if (!confusable) pool.push({ perm: perms[i], grid: grids[i] });
+  function hasUniqueSolution(perm, grid, allPerms, n) {
+    for (const other of allPerms) {
+      if (other === perm) continue;
+      if (isConfusablePair(perm, grid, other, n)) return false;
     }
-    return pool.length ? pool : perms.map((p, i) => ({ perm: p, grid: grids[i] }));
+    return true;
+  }
+
+  // Checking one random candidate against the full permutation space is O(n!) - checking
+  // every candidate against every other one (the original approach) was O(n!^2), which is
+  // instant at 5x5/6x6 but would freeze the browser well before 8x8. Sampling a handful of
+  // unique-solution candidates gives the same first-tap-safety and variety as a full pool,
+  // without the quadratic blowup.
+  function buildUniqueSolutionPool(n) {
+    const allPerms = permutationsOf(n);
+    const poolTarget = Math.min(30, allPerms.length);
+    const maxAttempts = poolTarget * 40;
+    const pool = [];
+    const tried = new Set();
+    let attempts = 0;
+    while (pool.length < poolTarget && attempts < maxAttempts && tried.size < allPerms.length) {
+      attempts++;
+      const idx = Math.floor(Math.random() * allPerms.length);
+      if (tried.has(idx)) continue;
+      tried.add(idx);
+      const perm = allPerms[idx];
+      const grid = computeClueGrid(perm, n);
+      if (hasUniqueSolution(perm, grid, allPerms, n)) pool.push({ perm, grid });
+    }
+    if (!pool.length) {
+      const perm = allPerms[Math.floor(Math.random() * allPerms.length)];
+      pool.push({ perm, grid: computeClueGrid(perm, n) });
+    }
+    return pool;
   }
 
   function startRound() {
-    const n = GRID_SIZE;
+    const n = currentGridSize();
+    document.documentElement.style.setProperty('--grid-size', n);
     state = {
       n,
       pool: buildUniqueSolutionPool(n),
@@ -150,6 +183,7 @@
     };
     el.total.textContent = state.total;
     el.critters.textContent = state.n;
+    el.level.textContent = `Level ${level + 1} · ${n}×${n}`;
     updateStats();
     render();
   }
@@ -407,8 +441,13 @@
 
   function winRound() {
     state.roundOver = true;
+    const wasAtMax = state.n >= MAX_GRID;
+    if (!wasAtMax) level++;
+    const nextSize = currentGridSize();
     setTimeout(() => {
-      el.winStats.textContent = `Lives kept: ${state.lives}/${MAX_LIVES}`;
+      el.winStats.textContent = wasAtMax
+        ? `Lives kept: ${state.lives}/${MAX_LIVES} — you've maxed out at ${MAX_GRID}×${MAX_GRID}!`
+        : `Lives kept: ${state.lives}/${MAX_LIVES} — Level ${level + 1} unlocked (${nextSize}×${nextSize})!`;
       el.winOverlay.classList.remove('hidden');
     }, 300);
   }
