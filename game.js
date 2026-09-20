@@ -174,19 +174,21 @@
     return state.perm.some((c, r) => state.cells[r][c].status === 'hidden');
   }
 
-  // True only when every hidden critter (and nothing else) is flagged - a single wrong or
-  // missing flag returns false, so this can't false-trigger on a partial or incorrect guess.
+  // True once every critter is accounted for - either correctly flagged or already revealed
+  // (from a tap, Sniff, etc). A critter cell already revealed can never be flagged (toggleFlag
+  // only acts on hidden cells), so it must count as accounted-for on its own, or this could
+  // never trigger once a single life had already been lost. Any wrong flag returns false.
   function allCrittersFlaggedCorrectly() {
     if (!state.firstTapDone) return false;
-    let flaggedCount = 0;
     for (let r = 0; r < state.n; r++) {
       for (let c = 0; c < state.n; c++) {
-        if (!state.cells[r][c].flagged) continue;
-        if (state.perm[r] !== c) return false;
-        flaggedCount++;
+        const cell = state.cells[r][c];
+        const isCritterCell = state.perm[r] === c;
+        if (cell.flagged && !isCritterCell) return false;
+        if (isCritterCell && cell.status === 'hidden' && !cell.flagged) return false;
       }
     }
-    return flaggedCount === state.n;
+    return true;
   }
 
   // Reveals everything else at once so flagging every critter correctly clears the round
@@ -238,7 +240,11 @@
       state.lives--;
       updateStats();
       render();
-      if (state.lives <= 0) offerContinue();
+      if (state.lives <= 0) {
+        offerContinue();
+      } else if (allCrittersFlaggedCorrectly()) {
+        autoCompleteRound();
+      }
     } else {
       cell.status = 'revealed';
       state.revealed++;
@@ -262,6 +268,7 @@
     state.cells[r][c] = { status: 'critter', flagged: false };
     updateStats();
     render();
+    if (allCrittersFlaggedCorrectly()) autoCompleteRound();
   }
 
   function useRewind() {
@@ -407,27 +414,43 @@
     if (Math.hypot(x - pressStart.x, y - pressStart.y) > MOVE_TOLERANCE_PX) cancelPress();
   }
 
-  // Plain touch/mouse events instead of the Pointer Events + setPointerCapture approach we
-  // tried before: that still failed on Android Chrome and Samsung Internet (worked on iOS
-  // Safari only). Passive touch listeners don't fight Android's compositor for ownership of
-  // the gesture at all - we're not claiming or cancelling anything, just watching timing -
-  // which sidesteps whatever was pre-empting the pointer sequence before our timer could fire.
+  function dispatchTap(r, c) {
+    if (state.pulseArmed) { usePulseAt(r, c); return; }
+    if (state.decodeArmed) { useDecodeAt(r, c); return; }
+    tapCell(r, c);
+  }
+
+  // Two earlier attempts (Pointer Events + setPointerCapture, then passive touch/mouse
+  // listeners relying on the browser's synthesized click) both failed specifically on Android
+  // Chromium browsers while working fine everywhere on iOS/iPadOS WebKit, Chrome included -
+  // confirming this is an engine difference, not a browser-branding one. This version fully
+  // claims the touch gesture instead of cooperating with it: touchstart/touchend are
+  // non-passive and call preventDefault, so no native click, context menu, or selection ever
+  // gets a chance to start, and we dispatch the tap/flag ourselves rather than trusting the
+  // browser to synthesize a click afterward.
   function attachCellGestures(div, r, c) {
     div.addEventListener('touchstart', (e) => {
+      e.preventDefault();
       lastTouchTime = Date.now();
       const t = e.touches[0];
       if (t) startPress(r, c, t.clientX, t.clientY);
-    }, { passive: true });
+    }, { passive: false });
     div.addEventListener('touchmove', (e) => {
       const t = e.touches[0];
       if (t) movePress(t.clientX, t.clientY);
     }, { passive: true });
-    div.addEventListener('touchend', cancelPress);
+    div.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      const wasLongPress = longPressFired;
+      cancelPress();
+      longPressFired = false;
+      if (!wasLongPress) dispatchTap(r, c);
+    }, { passive: false });
     div.addEventListener('touchcancel', cancelPress);
 
     div.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
-      if (Date.now() - lastTouchTime < 800) return; // this is the synthetic mouse event that follows a touch, not a real click
+      if (Date.now() - lastTouchTime < 800) return; // guards against a stray synthetic mouse event on devices where touchstart's preventDefault doesn't suppress it
       startPress(r, c, e.clientX, e.clientY);
     });
     div.addEventListener('mousemove', (e) => movePress(e.clientX, e.clientY));
@@ -439,10 +462,9 @@
       toggleFlag(r, c);
     });
     div.addEventListener('click', () => {
+      if (Date.now() - lastTouchTime < 800) return; // touch already handled via touchend above
       if (longPressFired) { longPressFired = false; return; }
-      if (state.pulseArmed) { usePulseAt(r, c); return; }
-      if (state.decodeArmed) { useDecodeAt(r, c); return; }
-      tapCell(r, c);
+      dispatchTap(r, c);
     });
   }
 
