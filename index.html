@@ -2,30 +2,56 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <title>Compass Critters</title>
-<style>
-  :root { color-scheme: dark; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: #14141c;
-    color: #f0f0f5;
-    text-align: center;
-  }
-  main { padding: 2rem; }
-  h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-  p { color: #a0a0b0; margin: 0; }
-</style>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main>
-    <h1>Compass Critters</h1>
-    <p>Deployment pipeline check — the game build is next.</p>
-  </main>
+
+  <h1>Compass Critters</h1>
+  <p class="subtitle">Tap a tile. Empty tiles are always safe and show the way to the nearest critter. Tapping a critter costs a life.</p>
+
+  <div class="stats">
+    <div class="stat" id="livesStat">❤️❤️❤️</div>
+    <div class="stat">🪙 <span id="coinsVal">0</span></div>
+    <div class="stat">🎯 <span id="foundVal">0</span>/<span id="totalVal">0</span></div>
+  </div>
+
+  <div class="board-frame">
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn-secondary" id="flagModeBtn">Flag mode: off</button>
+  </div>
+  <div class="controls">
+    <button class="btn-primary" id="newRoundBtn">New round</button>
+  </div>
+
+  <p class="legend">Arrows point toward the nearest hidden critter using a true 45° read — not a rough quadrant. ✦ means two critters are exactly tied for nearest. Flagging a tile is optional bookkeeping to avoid a misclick; it's never required to win. Lose all 3 lives and you'll be offered a continue before the round resets.</p>
+
+  <div class="overlay hidden" id="winOverlay">
+    <div class="modal">
+      <h2>Board cleared</h2>
+      <p id="winStats"></p>
+      <div class="modal-actions">
+        <button class="btn-primary" id="winPlayAgainBtn">Play again</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="continueOverlay">
+    <div class="modal">
+      <h2>Out of lives</h2>
+      <p>Continue for one more life, or the round resets.</p>
+      <div class="modal-actions">
+        <button class="btn-primary" id="continueCoinBtn">Spend 1 🪙 to continue</button>
+        <button class="btn-secondary" id="continueAdBtn">Watch ad to continue</button>
+        <button class="btn-secondary" id="continueDeclineBtn">No thanks, reset round</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
 </body>
 </html>

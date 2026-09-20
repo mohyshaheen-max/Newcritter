@@ -1,0 +1,252 @@
+(function () {
+  const GRID_SIZE = 5;
+  const MAX_LIVES = 3;
+  const TIE = '✦';
+  const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
+  const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻'];
+
+  const el = {
+    grid: document.getElementById('grid'),
+    lives: document.getElementById('livesStat'),
+    coins: document.getElementById('coinsVal'),
+    found: document.getElementById('foundVal'),
+    total: document.getElementById('totalVal'),
+    flagModeBtn: document.getElementById('flagModeBtn'),
+    newRoundBtn: document.getElementById('newRoundBtn'),
+    winOverlay: document.getElementById('winOverlay'),
+    winStats: document.getElementById('winStats'),
+    winPlayAgainBtn: document.getElementById('winPlayAgainBtn'),
+    continueOverlay: document.getElementById('continueOverlay'),
+    continueCoinBtn: document.getElementById('continueCoinBtn'),
+    continueAdBtn: document.getElementById('continueAdBtn'),
+    continueDeclineBtn: document.getElementById('continueDeclineBtn'),
+  };
+  document.documentElement.style.setProperty('--grid-size', GRID_SIZE);
+
+  // Placeholder balance until the real coin economy (earned from stars, persisted) lands in build-order step 4.
+  let coins = 3;
+
+  let state = null;
+
+  function permutationsOf(n) {
+    const indices = Array.from({ length: n }, (_, i) => i);
+    const results = [];
+    (function build(remaining, chosen) {
+      if (remaining.length === 0) { results.push(chosen); return; }
+      for (let i = 0; i < remaining.length; i++) {
+        const rest = remaining.slice(0, i).concat(remaining.slice(i + 1));
+        build(rest, chosen.concat(remaining[i]));
+      }
+    })(indices, []);
+    return results;
+  }
+
+  function wedgeIndex(dr, dc) {
+    // dr/dc are (critter - tile). Flip dr so "up" (toward row 0) reads as north, matching the arrow glyphs.
+    let deg = Math.atan2(-dr, dc) * 180 / Math.PI;
+    if (deg < 0) deg += 360;
+    return Math.round(deg / 45) % 8;
+  }
+
+  function computeClueGrid(perm, n) {
+    const critters = perm.map((c, r) => ({ r, c }));
+    const grid = Array.from({ length: n }, () => Array(n).fill(null));
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (perm[r] === c) continue; // critter cell: no clue rendered here
+        let minD2 = Infinity;
+        let nearest = [];
+        for (const a of critters) {
+          const dr = a.r - r, dc = a.c - c;
+          const d2 = dr * dr + dc * dc;
+          if (d2 < minD2) { minD2 = d2; nearest = [{ dr, dc }]; }
+          else if (d2 === minD2) { nearest.push({ dr, dc }); }
+        }
+        const wedges = new Set(nearest.map(({ dr, dc }) => wedgeIndex(dr, dc)));
+        grid[r][c] = wedges.size > 1 ? TIE : ARROWS[[...wedges][0]];
+      }
+    }
+    return grid;
+  }
+
+  // Two permutations are "confusable" if they'd show identical clues at every cell that's
+  // non-critter under BOTH of them (cells that are a critter under either one carry no
+  // comparable clue, so they're skipped). A permutation only has a provably unique solution
+  // if nothing else in the candidate pool is confusable with it. This is why a genuinely
+  // forced 50/50 can still happen deep in a round: local ambiguity between two boards can
+  // exist even though each board, as a whole, maps back to exactly one arrangement.
+  function areConfusable(permA, gridA, permB, gridB, n) {
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (permA[r] === c || permB[r] === c) continue;
+        if (gridA[r][c] !== gridB[r][c]) return false;
+      }
+    }
+    return true;
+  }
+
+  function buildUniqueSolutionPool(n) {
+    const perms = permutationsOf(n);
+    const grids = perms.map(p => computeClueGrid(p, n));
+    const pool = [];
+    for (let i = 0; i < perms.length; i++) {
+      let confusable = false;
+      for (let j = 0; j < perms.length; j++) {
+        if (i === j) continue;
+        if (areConfusable(perms[i], grids[i], perms[j], grids[j], n)) { confusable = true; break; }
+      }
+      if (!confusable) pool.push({ perm: perms[i], grid: grids[i] });
+    }
+    return pool.length ? pool : perms.map((p, i) => ({ perm: p, grid: grids[i] }));
+  }
+
+  function startRound() {
+    const n = GRID_SIZE;
+    state = {
+      n,
+      pool: buildUniqueSolutionPool(n),
+      perm: null,
+      grid: null,
+      firstTapDone: false,
+      cells: Array.from({ length: n }, () => Array.from({ length: n }, () => ({ status: 'hidden', flagged: false }))),
+      lives: MAX_LIVES,
+      revealed: 0,
+      total: n * n - n,
+      flagMode: false,
+      roundOver: false,
+    };
+    el.total.textContent = state.total;
+    updateStats();
+    render();
+  }
+
+  function resolveFirstTap(r, c) {
+    let candidates = state.pool.filter(({ perm }) => perm[r] !== c);
+    if (!candidates.length) {
+      candidates = permutationsOf(state.n)
+        .filter(p => p[r] !== c)
+        .map(p => ({ perm: p, grid: computeClueGrid(p, state.n) }));
+    }
+    const choice = candidates[Math.floor(Math.random() * candidates.length)];
+    state.perm = choice.perm;
+    state.grid = choice.grid;
+    state.firstTapDone = true;
+  }
+
+  function tapCell(r, c) {
+    if (state.roundOver) return;
+    const cell = state.cells[r][c];
+    if (cell.status !== 'hidden') return;
+
+    if (state.flagMode) {
+      cell.flagged = !cell.flagged;
+      render();
+      return;
+    }
+    if (cell.flagged) return;
+
+    if (!state.firstTapDone) resolveFirstTap(r, c);
+
+    if (state.perm[r] === c) {
+      cell.status = 'critter';
+      state.lives--;
+      updateStats();
+      render();
+      if (state.lives <= 0) offerContinue();
+    } else {
+      cell.status = 'revealed';
+      state.revealed++;
+      updateStats();
+      render();
+      if (state.revealed >= state.total) winRound();
+    }
+  }
+
+  function offerContinue() {
+    state.roundOver = true;
+    el.continueCoinBtn.disabled = coins < 1;
+    el.continueOverlay.classList.remove('hidden');
+  }
+
+  function grantExtraLife() {
+    state.lives = 1;
+    state.roundOver = false;
+    el.continueOverlay.classList.add('hidden');
+    updateStats();
+  }
+
+  function winRound() {
+    state.roundOver = true;
+    setTimeout(() => {
+      el.winStats.textContent = `Lives kept: ${state.lives}/${MAX_LIVES}`;
+      el.winOverlay.classList.remove('hidden');
+    }, 300);
+  }
+
+  function updateStats() {
+    el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(MAX_LIVES - state.lives);
+    el.coins.textContent = coins;
+    el.found.textContent = state.revealed;
+  }
+
+  function render() {
+    el.grid.innerHTML = '';
+    for (let r = 0; r < state.n; r++) {
+      for (let c = 0; c < state.n; c++) {
+        const cell = state.cells[r][c];
+        const div = document.createElement('div');
+        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '');
+        if (cell.status === 'revealed') {
+          div.textContent = state.grid[r][c];
+        } else if (cell.status === 'critter') {
+          div.textContent = ANIMALS[r % ANIMALS.length];
+        } else if (cell.flagged) {
+          div.textContent = '🚩';
+        }
+        div.addEventListener('click', () => tapCell(r, c));
+        el.grid.appendChild(div);
+      }
+    }
+  }
+
+  el.flagModeBtn.addEventListener('click', () => {
+    state.flagMode = !state.flagMode;
+    el.flagModeBtn.textContent = state.flagMode ? 'Flag mode: on' : 'Flag mode: off';
+    el.flagModeBtn.classList.toggle('active', state.flagMode);
+  });
+
+  el.newRoundBtn.addEventListener('click', () => {
+    el.winOverlay.classList.add('hidden');
+    el.continueOverlay.classList.add('hidden');
+    startRound();
+  });
+
+  el.winPlayAgainBtn.addEventListener('click', () => {
+    el.winOverlay.classList.add('hidden');
+    startRound();
+  });
+
+  el.continueCoinBtn.addEventListener('click', () => {
+    if (coins < 1) return;
+    coins--;
+    grantExtraLife();
+  });
+
+  el.continueAdBtn.addEventListener('click', () => {
+    el.continueAdBtn.disabled = true;
+    const original = el.continueAdBtn.textContent;
+    el.continueAdBtn.textContent = 'Watching ad…';
+    setTimeout(() => {
+      el.continueAdBtn.disabled = false;
+      el.continueAdBtn.textContent = original;
+      grantExtraLife();
+    }, 600);
+  });
+
+  el.continueDeclineBtn.addEventListener('click', () => {
+    el.continueOverlay.classList.add('hidden');
+    startRound();
+  });
+
+  startRound();
+})();
