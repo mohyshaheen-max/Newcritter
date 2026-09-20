@@ -7,6 +7,7 @@
   const PULSE_COST = 3; // bumped from 2: on a 5x5 board a 3x3 scan can pin a 3-row block's columns almost exactly, stronger than a 1-coin Sniff
   const PULSE_MIN_GRID = 5; // per product decision: unlocks at 5x5 and above
   const DECODE_COST = 2;
+  const WARD_COST = 2;
 
   const el = {
     grid: document.getElementById('grid'),
@@ -20,6 +21,7 @@
     rewindBtn: document.getElementById('rewindBtn'),
     pulseBtn: document.getElementById('pulseBtn'),
     decodeBtn: document.getElementById('decodeBtn'),
+    wardBtn: document.getElementById('wardBtn'),
     shieldBtn: document.getElementById('shieldBtn'),
     winOverlay: document.getElementById('winOverlay'),
     winStats: document.getElementById('winStats'),
@@ -46,6 +48,11 @@
   // Survives round resets (that's the point of a streak shield) - there's no real streak
   // counter to protect yet (that's build-order step 4), so this just tracks arm/consume state.
   let streakShieldArmed = false;
+
+  // A separate power-up from Streak Shield: absorbs your next critter hit (no life lost)
+  // whenever it happens, rather than protecting the streak on a round reset. Also survives
+  // round resets, since it's a banked protection the player paid for and hasn't used yet.
+  let lifeWardArmed = false;
 
   let state = null;
 
@@ -237,7 +244,12 @@
 
     if (state.perm[r] === c) {
       cell.status = 'critter';
-      state.lives--;
+      if (lifeWardArmed) {
+        lifeWardArmed = false;
+        showToast('🛡️ Ward absorbed that hit — no life lost.');
+      } else {
+        state.lives--;
+      }
       updateStats();
       render();
       if (state.lives <= 0) {
@@ -286,6 +298,13 @@
     if (streakShieldArmed || coins < 1) return;
     coins--;
     streakShieldArmed = true;
+    updateStats();
+  }
+
+  function useWard() {
+    if (lifeWardArmed || coins < WARD_COST) return;
+    coins -= WARD_COST;
+    lifeWardArmed = true;
     updateStats();
   }
 
@@ -487,6 +506,9 @@
     el.decodeBtn.textContent = state.decodeArmed ? 'Decode: tap a ✦ tile…' : `Decode · ${DECODE_COST} 🪙`;
     el.decodeBtn.classList.toggle('active', state.decodeArmed);
 
+    el.wardBtn.disabled = state.roundOver || coins < WARD_COST || lifeWardArmed;
+    el.wardBtn.textContent = lifeWardArmed ? 'Ward: armed 🛡️' : `Ward · ${WARD_COST} 🪙`;
+
     el.shieldBtn.disabled = state.roundOver || coins < 1 || streakShieldArmed;
     el.shieldBtn.textContent = streakShieldArmed ? 'Shield: armed 🛡️' : 'Shield · 1 🪙';
   }
@@ -555,6 +577,7 @@
   el.rewindBtn.addEventListener('click', useRewind);
   el.pulseBtn.addEventListener('click', togglePulseArm);
   el.decodeBtn.addEventListener('click', toggleDecodeArm);
+  el.wardBtn.addEventListener('click', useWard);
   el.shieldBtn.addEventListener('click', useShield);
 
   startRound();
