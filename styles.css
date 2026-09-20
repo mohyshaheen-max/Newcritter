@@ -132,6 +132,7 @@ h1 {
   border-radius: 13px;
 }
 .cell {
+  position: relative;
   background: var(--cell-hidden);
   border-radius: 8px;
   display: flex;
@@ -151,6 +152,24 @@ h1 {
 .cell.critter { background: var(--cell-critter); cursor: default; font-size: 1.5rem; animation: shake 0.3s ease; }
 .cell.revealed.decoded { font-size: 0.95rem; letter-spacing: -1px; }
 .cell.pulse-highlight { outline: 3px solid var(--accent); outline-offset: -3px; }
+.pulse-count {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a1406;
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px var(--shadow);
+  z-index: 5;
+}
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-3px); }

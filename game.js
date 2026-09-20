@@ -4,7 +4,7 @@
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
   const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻'];
-  const PULSE_COST = 2;
+  const PULSE_COST = 3; // bumped from 2: on a 5x5 board a 3x3 scan can pin a 3-row block's columns almost exactly, stronger than a 1-coin Sniff
   const PULSE_MIN_GRID = 5; // per product decision: unlocks at 5x5 and above
   const DECODE_COST = 2;
 
@@ -40,8 +40,8 @@
   }
   document.documentElement.style.setProperty('--grid-size', GRID_SIZE);
 
-  // Placeholder balance until the real coin economy (earned from stars, persisted) lands in build-order step 4.
-  let coins = 3;
+  // Bumped up for easier testing of the power-ups; real coin economy (earned from stars, persisted) lands in build-order step 4.
+  let coins = 10;
 
   // Survives round resets (that's the point of a streak shield) - there's no real streak
   // counter to protect yet (that's build-order step 4), so this just tracks arm/consume state.
@@ -268,13 +268,21 @@
     ensureBoardResolved();
     const count = countCrittersInArea(state.perm, state.n, r, c);
     coins -= PULSE_COST;
-    highlightArea(r, c);
+    highlightArea(r, c, count);
     showToast(`Pulse: ${count} critter${count === 1 ? '' : 's'} in that 3×3 area`);
     updateStats();
   }
 
-  function highlightArea(r, c) {
+  function highlightArea(r, c, count) {
     const n = state.n;
+    const centerDiv = el.grid.children[r * n + c];
+    if (centerDiv) {
+      const badge = document.createElement('span');
+      badge.className = 'pulse-count';
+      badge.textContent = count;
+      centerDiv.appendChild(badge);
+      setTimeout(() => badge.remove(), 1800);
+    }
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         const rr = r + dr, cc = c + dc;
@@ -282,7 +290,7 @@
         const div = el.grid.children[rr * n + cc];
         if (!div) continue;
         div.classList.add('pulse-highlight');
-        setTimeout(() => div.classList.remove('pulse-highlight'), 900);
+        setTimeout(() => div.classList.remove('pulse-highlight'), 1800);
       }
     }
   }

@@ -44,7 +44,7 @@ No move budget and no rationed information: every clue is always available for t
 | --- | --- | --- | --- |
 | Sniff | Reveals one critter directly | 1 coin | Level 1 |
 | Rewind | Undoes your last action | 1 coin | Level 1 |
-| Pulse | Scans a 3×3 area (clipped at edges) and returns a count of critters inside; immune to masking | 2 coins | 5×5 and above |
+| Pulse | Scans a 3×3 area (clipped at edges) and returns a count of critters inside; immune to masking | 3 coins | 5×5 and above |
 | Decode | Reveals the exact tied directions behind a ✦ on a tile you've already revealed | 2 coins | Level 1 |
 | Continue | One extra life the moment your 3rd life is lost, before the round resets | 1 coin or rewarded ad | Level 1 |
 | Streak Shield | Protects your streak through one round-reset or one missed day | Earned or purchased | Level 1 |
