@@ -11,6 +11,7 @@
     coins: document.getElementById('coinsVal'),
     found: document.getElementById('foundVal'),
     total: document.getElementById('totalVal'),
+    critters: document.getElementById('crittersVal'),
     newRoundBtn: document.getElementById('newRoundBtn'),
     winOverlay: document.getElementById('winOverlay'),
     winStats: document.getElementById('winStats'),
@@ -114,6 +115,7 @@
       roundOver: false,
     };
     el.total.textContent = state.total;
+    el.critters.textContent = state.n;
     updateStats();
     render();
   }
