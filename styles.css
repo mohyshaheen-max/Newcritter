@@ -155,6 +155,7 @@ h1 {
 .cell.revealed { background: var(--cell-revealed); cursor: default; color: var(--accent-strong); font-size: 1.2rem; }
 .cell.critter { background: var(--cell-critter); cursor: default; font-size: 1.5rem; animation: shake 0.3s ease; }
 .cell.revealed.decoded { font-size: 0.95rem; letter-spacing: -1px; }
+.cell.revealed.near { color: var(--danger); font-weight: 700; }
 .cell.pulse-highlight { outline: 3px solid var(--accent); outline-offset: -3px; }
 .pulse-count {
   position: absolute;

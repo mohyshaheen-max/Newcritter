@@ -94,6 +94,18 @@
     return [...new Set(nearest.map(({ dr, dc }) => wedgeIndex(dr, dc)))];
   }
 
+  const NEAR_DISTANCE_SQUARED = 4; // Euclidean distance <= 2, same metric as everything else here
+
+  function nearestDistanceSquared(perm, n, r, c) {
+    let minD2 = Infinity;
+    for (let a = 0; a < n; a++) {
+      const dr = a - r, dc = perm[a] - c;
+      const d2 = dr * dr + dc * dc;
+      if (d2 < minD2) minD2 = d2;
+    }
+    return minD2;
+  }
+
   function computeClueGrid(perm, n) {
     const grid = Array.from({ length: n }, () => Array(n).fill(null));
     for (let r = 0; r < n; r++) {
@@ -571,7 +583,8 @@
         const cell = state.cells[r][c];
         const div = document.createElement('div');
         const decoded = cell.status === 'revealed' && cell.decodedWedges;
-        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '');
+        const near = cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
+        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '');
         if (decoded) {
           div.textContent = cell.decodedWedges.map(i => ARROWS[i]).join('');
         } else if (cell.status === 'revealed') {

@@ -17,6 +17,7 @@ No move budget and no rationed information: every clue is always available for t
 - Grid is N×N with exactly N critters, one per row and one per column (a permutation, like non-attacking rooks). Critter count is never set independently of grid size.
 - Direction is a true 45° angle wedge, not a sign-based quadrant, so all eight directions read the same width. On integer grid coordinates, no tile's angle ever lands exactly on a wedge boundary — a single critter never produces an ambiguous reading.
 - "Nearest" is decided by plain Euclidean distance. A tile's arrow only ever reports its nearest critter; a farther critter is invisible from that tile until you're standing closer to it than to anything else (masking).
+- An arrow or ✦ renders in red when its nearest critter is within Euclidean distance 2 (decided 2026-09-20) - a proximity warning layered on top of the direction, using the same distance metric as everything else.
 - A ✦ tie only appears when two or more critters share the exact minimum distance to a tile and fall in different wedges.
 - Generation checks candidate permutations for the grid size and only serves ones with a provably unique solution — the full clue grid maps back to exactly one arrangement.
 - The first tap of every round is generation-time guaranteed safe: the arrangement isn't finalized until after that tap, filtered to permutations that don't place a critter there. This is free and automatic, not a purchasable power-up.
