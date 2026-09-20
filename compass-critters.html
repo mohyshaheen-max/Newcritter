@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Compass Critters</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&display=swap">
+<style>
+  :root {
+    --bg: #eef1e6;
+    --panel: #ffffff;
+    --fg: #23291f;
+    --fg-soft: rgba(35,41,31,0.62);
+    --accent: #b8792a;
+    --accent-strong: #96611e;
+    --success: #3f8f83;
+    --danger: #b1494a;
+    --cell-hidden: #dfe3d2;
+    --cell-hidden-hover: #d2d7c2;
+    --cell-revealed: #ffffff;
+    --border: #c7cdb8;
+    --shadow: rgba(35,41,31,0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17231c;
+      --panel: #1f2e24;
+      --fg: #f2ece0;
+      --fg-soft: rgba(242,236,224,0.62);
+      --accent: #d9a441;
+      --accent-strong: #eab765;
+      --success: #5fa8a0;
+      --danger: #c1595a;
+      --cell-hidden: #24352a;
+      --cell-hidden-hover: #2c4032;
+      --cell-revealed: #1f2e24;
+      --border: #35493c;
+      --shadow: rgba(0,0,0,0.45);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17231c;
+    --panel: #1f2e24;
+    --fg: #f2ece0;
+    --fg-soft: rgba(242,236,224,0.62);
+    --accent: #d9a441;
+    --accent-strong: #eab765;
+    --success: #5fa8a0;
+    --danger: #c1595a;
+    --cell-hidden: #24352a;
+    --cell-hidden-hover: #2c4032;
+    --cell-revealed: #1f2e24;
+    --border: #35493c;
+    --shadow: rgba(0,0,0,0.45);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--bg); }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 16px 48px;
+  }
+
+  h1 {
+    font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
+    font-weight: 700;
+    font-size: 1.7rem;
+    margin: 0 0 4px;
+    letter-spacing: 0.01em;
+  }
+  .subtitle {
+    font-size: 0.9rem;
+    color: var(--fg-soft);
+    margin-bottom: 18px;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.4;
+  }
+
+  .stats {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    box-shadow: 0 2px 6px var(--shadow);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .board-frame {
+    background: linear-gradient(160deg, var(--accent-strong), var(--accent));
+    padding: 8px;
+    border-radius: 18px;
+    box-shadow: 0 10px 28px var(--shadow);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(40px, 54px));
+    grid-template-rows: repeat(6, minmax(40px, 54px));
+    gap: 5px;
+    background: var(--panel);
+    padding: 6px;
+    border-radius: 13px;
+  }
+  .cell {
+    background: var(--cell-hidden);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s ease, background 0.15s ease;
+  }
+  .cell.hidden:active { transform: scale(0.9); }
+  .cell.hidden:hover { background: var(--cell-hidden-hover); }
+  .cell.revealed, .cell.animal { background: var(--cell-revealed); cursor: default; color: var(--accent-strong); font-size: 1.15rem; }
+  .cell.animal { font-size: 1.45rem; }
+  .cell.flag-correct { background: var(--success); cursor: default; font-size: 1.45rem; }
+  .cell.flag-wrong { background: var(--danger); animation: shake 0.3s ease; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 18px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 340px;
+  }
+  button {
+    border: none;
+    border-radius: 12px;
+    padding: 10px 15px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: inherit;
+    cursor: pointer;
+    box-shadow: 0 2px 8px var(--shadow);
+    transition: transform 0.08s ease, outline 0.1s ease;
+  }
+  button:active { transform: scale(0.96); }
+  .btn-primary { background: var(--accent); color: #1a1406; }
+  .btn-secondary { background: var(--panel); color: var(--fg); border: 1px solid var(--border); }
+  .btn-secondary.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .legend {
+    font-size: 0.78rem;
+    color: var(--fg-soft);
+    margin-top: 20px;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.5;
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 14, 10, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    padding: 20px;
+  }
+  .overlay.hidden { display: none; }
+  .modal {
+    background: var(--panel);
+    border-radius: 18px;
+    padding: 30px 26px;
+    text-align: center;
+    max-width: 280px;
+    box-shadow: 0 16px 44px rgba(0,0,0,0.35);
+  }
+  .modal h2 {
+    font-family: 'Fraunces', Georgia, serif;
+    margin: 0 0 6px;
+  }
+  .modal p { color: var(--fg-soft); font-size: 0.9rem; margin: 4px 0 0; }
+  .stars { font-size: 1.7rem; margin: 14px 0; }
+</style>
+</head>
+<body>
+
+  <h1>Compass Critters</h1>
+  <p class="subtitle">Tap a tile to sniff the wind. Flag a tile once you've triangulated a critter.</p>
+
+  <div class="stats">
+    <div class="stat" id="hearts">❤️❤️❤️</div>
+    <div class="stat">🐾 <span id="coins">3</span></div>
+    <div class="stat">👣 <span id="moves">0</span> moves</div>
+    <div class="stat">🎯 <span id="found">0</span>/6</div>
+  </div>
+
+  <div class="board-frame">
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn-secondary" id="flagModeBtn">Flag mode: off</button>
+  </div>
+  <div class="controls">
+    <button class="btn-secondary" id="hintBtn">Sniff · 1 🐾</button>
+    <button class="btn-secondary" id="rewindBtn">Rewind · 1 🐾</button>
+    <button class="btn-secondary" id="adBtn">Watch ad · +1 🐾</button>
+  </div>
+  <div class="controls">
+    <button class="btn-primary" id="newBtn">New puzzle</button>
+  </div>
+
+  <p class="legend">Arrows point toward the nearest hidden critter. ✦ means two critters are equally close — cross-check it against a neighboring tile to narrow things down. Three wrong flags and the round resets, so only commit once you're sure.</p>
+
+  <div class="overlay hidden" id="winOverlay">
+    <div class="modal">
+      <h2>All six found</h2>
+      <p id="winStats"></p>
+      <div class="stars" id="winStars"></div>
+      <button class="btn-primary" id="playAgainBtn">Play again</button>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="resetOverlay">
+    <div class="modal">
+      <h2>Out of guesses</h2>
+      <p>Three wrong flags — the critters scattered. Fresh board, same coins.</p>
+      <button class="btn-primary" id="tryAgainBtn">Try again</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const SIZE = 6;
+  const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻', '🐼'];
+  const DIRS = {
+    '-1,0': '↑', '-1,1': '↗', '0,1': '→', '1,1': '↘',
+    '1,0': '↓', '1,-1': '↙', '0,-1': '←', '-1,-1': '↖'
+  };
+  const TIE = '✦';
+
+  let perm = [];
+  let clueGrid = [];
+  let cellState = [];
+  let flagMode = false;
+  let moves = 0, coins = 3, found = 0, strikes = 0;
+  let roundOver = false;
+  const MAX_STRIKES = 3;
+  let history = [];
+
+  const sign = n => (n === 0 ? 0 : n > 0 ? 1 : -1);
+
+  function permute(arr) {
+    if (arr.length <= 1) return [arr];
+    const result = [];
+    for (let i = 0; i < arr.length; i++) {
+      const rest = arr.slice(0, i).concat(arr.slice(i + 1));
+      for (const p of permute(rest)) result.push([arr[i], ...p]);
+    }
+    return result;
+  }
+
+  function computeClueGrid(p) {
+    const animals = p.map((c, r) => ({ r, c }));
+    const grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (p[r] === c) { grid[r][c] = 'A'; continue; }
+        let minDist = Infinity, candidates = [];
+        for (const a of animals) {
+          const d = Math.max(Math.abs(a.r - r), Math.abs(a.c - c));
+          if (d < minDist) { minDist = d; candidates = [a]; }
+          else if (d === minDist) { candidates.push(a); }
+        }
+        if (candidates.length > 1) { grid[r][c] = TIE; continue; }
+        const a = candidates[0];
+        const key = sign(a.r - r) + ',' + sign(a.c - c);
+        grid[r][c] = DIRS[key] || '?';
+      }
+    }
+    return grid;
+  }
+
+  const signature = grid => grid.map(row => row.join('')).join('|');
+
+  function generatePuzzle() {
+    const allPerms = permute([0, 1, 2, 3, 4, 5]);
+    const sigMap = new Map();
+    const sigs = allPerms.map(p => {
+      const g = computeClueGrid(p);
+      const s = signature(g);
+      sigMap.set(s, (sigMap.get(s) || 0) + 1);
+      return { p, g, s };
+    });
+    const uniqueOnes = sigs.filter(x => sigMap.get(x.s) === 1);
+    const pool = uniqueOnes.length ? uniqueOnes : sigs;
+    const choice = pool[Math.floor(Math.random() * pool.length)];
+
+    perm = choice.p;
+    clueGrid = choice.g;
+    cellState = Array.from({ length: SIZE }, () => Array(SIZE).fill('hidden'));
+    moves = 0; found = 0; strikes = 0; roundOver = false; history = [];
+    updateStats();
+    render();
+  }
+
+  function updateStats() {
+    document.getElementById('coins').textContent = coins;
+    document.getElementById('moves').textContent = moves;
+    document.getElementById('found').textContent = found;
+    document.getElementById('hearts').textContent =
+      '❤️'.repeat(MAX_STRIKES - strikes) + '🤍'.repeat(strikes);
+  }
+
+  function render() {
+    const gridEl = document.getElementById('grid');
+    gridEl.innerHTML = '';
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const div = document.createElement('div');
+        const st = cellState[r][c];
+        let cls = 'hidden';
+        if (st === 'revealed') cls = perm[r] === c ? 'animal' : 'revealed';
+        else if (st !== 'hidden') cls = st;
+        div.className = 'cell ' + cls;
+        if (st === 'revealed') {
+          div.textContent = perm[r] === c ? ANIMALS[r] : clueGrid[r][c];
+        } else if (st === 'flag-correct') {
+          div.textContent = ANIMALS[r];
+        } else if (st === 'flag-wrong') {
+          div.textContent = '🚩';
+        }
+        div.addEventListener('click', () => handleCellClick(r, c));
+        gridEl.appendChild(div);
+      }
+    }
+  }
+
+  function handleCellClick(r, c) {
+    if (roundOver) return;
+    if (cellState[r][c] !== 'hidden') return;
+    flagMode ? placeFlag(r, c) : revealCell(r, c);
+  }
+
+  function revealCell(r, c) {
+    history.push({ r, c, moves, found, strikes });
+    cellState[r][c] = 'revealed';
+    moves++;
+    if (perm[r] === c) found++;
+    updateStats();
+    render();
+    checkWin();
+  }
+
+  function placeFlag(r, c) {
+    history.push({ r, c, moves, found, strikes });
+    moves++;
+    if (perm[r] === c) {
+      cellState[r][c] = 'flag-correct';
+      found++;
+      updateStats();
+      render();
+      checkWin();
+    } else {
+      cellState[r][c] = 'flag-wrong';
+      strikes++;
+      updateStats();
+      render();
+      if (strikes >= MAX_STRIKES) {
+        roundOver = true;
+        setTimeout(() => {
+          document.getElementById('resetOverlay').classList.remove('hidden');
+        }, 500);
+      } else {
+        setTimeout(() => {
+          if (cellState[r][c] === 'flag-wrong') {
+            cellState[r][c] = 'hidden';
+            render();
+          }
+        }, 500);
+      }
+    }
+  }
+
+  function checkWin() {
+    if (found >= SIZE) {
+      setTimeout(() => {
+        document.getElementById('winStats').textContent = `Solved in ${moves} moves.`;
+        const stars = moves <= 8 ? '⭐⭐⭐' : moves <= 12 ? '⭐⭐' : '⭐';
+        document.getElementById('winStars').textContent = stars;
+        document.getElementById('winOverlay').classList.remove('hidden');
+      }, 350);
+    }
+  }
+
+  function flashWarning(id) {
+    const el = document.getElementById(id);
+    const prev = el.style.color;
+    el.style.color = 'var(--danger)';
+    setTimeout(() => { el.style.color = prev; }, 400);
+  }
+
+  document.getElementById('flagModeBtn').addEventListener('click', function () {
+    flagMode = !flagMode;
+    this.textContent = flagMode ? 'Flag mode: on' : 'Flag mode: off';
+    this.classList.toggle('active', flagMode);
+  });
+
+  document.getElementById('hintBtn').addEventListener('click', () => {
+    if (roundOver) return;
+    if (coins < 1) return flashWarning('coins');
+    const hiddenAnimalRows = [];
+    for (let r = 0; r < SIZE; r++) {
+      if (cellState[r][perm[r]] === 'hidden') hiddenAnimalRows.push(r);
+    }
+    if (!hiddenAnimalRows.length) return;
+    coins--;
+    const r = hiddenAnimalRows[Math.floor(Math.random() * hiddenAnimalRows.length)];
+    cellState[r][perm[r]] = 'flag-correct';
+    found++;
+    updateStats();
+    render();
+    checkWin();
+  });
+
+  document.getElementById('rewindBtn').addEventListener('click', () => {
+    if (roundOver) return;
+    if (coins < 1) return flashWarning('coins');
+    if (!history.length) return;
+    const last = history.pop();
+    coins--;
+    cellState[last.r][last.c] = 'hidden';
+    moves = last.moves;
+    found = last.found;
+    strikes = last.strikes;
+    updateStats();
+    render();
+  });
+
+  document.getElementById('adBtn').addEventListener('click', function () {
+    coins++;
+    updateStats();
+    const original = this.textContent;
+    this.textContent = 'Coin added';
+    setTimeout(() => { this.textContent = original; }, 700);
+  });
+
+  document.getElementById('newBtn').addEventListener('click', generatePuzzle);
+  document.getElementById('playAgainBtn').addEventListener('click', () => {
+    document.getElementById('winOverlay').classList.add('hidden');
+    generatePuzzle();
+  });
+  document.getElementById('tryAgainBtn').addEventListener('click', () => {
+    document.getElementById('resetOverlay').classList.add('hidden');
+    generatePuzzle();
+  });
+
+  generatePuzzle();
+})();
+</script>
+</body>
+</html>
