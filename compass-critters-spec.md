@@ -44,9 +44,12 @@ No move budget and no rationed information: every clue is always available for t
 | --- | --- | --- | --- |
 | Sniff | Reveals one critter directly | 1 coin | Level 1 |
 | Rewind | Undoes your last action | 1 coin | Level 1 |
-| Pulse | Scans a 3×3 area (clipped at edges) and returns a count of critters inside; immune to masking | Higher than Sniff/Rewind, or ad-gated | Once the grid is large enough that a 3×3 scan isn't most of the board (roughly 5×5–6×6+) |
+| Pulse | Scans a 3×3 area (clipped at edges) and returns a count of critters inside; immune to masking | 2 coins | 5×5 and above |
+| Decode | Reveals the exact tied directions behind a ✦ on a tile you've already revealed | 2 coins | Level 1 |
 | Continue | One extra life the moment your 3rd life is lost, before the round resets | 1 coin or rewarded ad | Level 1 |
 | Streak Shield | Protects your streak through one round-reset or one missed day | Earned or purchased | Level 1 |
+
+Decode exists specifically so ✦ ties can stay an intentionally weak, hard-to-triangulate clue by default (see Difficulty progression) without leaving players stuck — it's an opt-in, paid way to unstick a tie instead of the base game revealing tied directions for free.
 
 The free first-tap safety guarantee (see Board & generation rules) sits outside this economy entirely — it's baseline fairness, not a power-up.
 
@@ -72,5 +75,5 @@ The free first-tap safety guarantee (see Board & generation rules) sits outside 
 - [ ] Stars → coins conversion rate
 - [ ] Daily streak definition — any completed round, or does it require a win
 - [ ] Leaderboard scoring metric and reward structure
-- [ ] Pulse's exact unlock grid size
+- [x] Pulse's exact unlock grid size — decided 2026-09-20: 5×5 and above
 - [ ] Naming and visual direction (deferred, not urgent)

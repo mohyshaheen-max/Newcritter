@@ -4,6 +4,9 @@
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
   const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻'];
+  const PULSE_COST = 2;
+  const PULSE_MIN_GRID = 5; // per product decision: unlocks at 5x5 and above
+  const DECODE_COST = 2;
 
   const el = {
     grid: document.getElementById('grid'),
@@ -15,6 +18,8 @@
     newRoundBtn: document.getElementById('newRoundBtn'),
     sniffBtn: document.getElementById('sniffBtn'),
     rewindBtn: document.getElementById('rewindBtn'),
+    pulseBtn: document.getElementById('pulseBtn'),
+    decodeBtn: document.getElementById('decodeBtn'),
     shieldBtn: document.getElementById('shieldBtn'),
     winOverlay: document.getElementById('winOverlay'),
     winStats: document.getElementById('winStats'),
@@ -23,7 +28,16 @@
     continueCoinBtn: document.getElementById('continueCoinBtn'),
     continueAdBtn: document.getElementById('continueAdBtn'),
     continueDeclineBtn: document.getElementById('continueDeclineBtn'),
+    toast: document.getElementById('toast'),
   };
+
+  let toastTimer = null;
+  function showToast(message) {
+    el.toast.textContent = message;
+    el.toast.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.toast.classList.remove('visible'), 2400);
+  }
   document.documentElement.style.setProperty('--grid-size', GRID_SIZE);
 
   // Placeholder balance until the real coin economy (earned from stars, persisted) lands in build-order step 4.
@@ -55,22 +69,25 @@
     return Math.round(deg / 45) % 8;
   }
 
+  function nearestWedges(perm, n, r, c) {
+    let minD2 = Infinity;
+    let nearest = [];
+    for (let a = 0; a < n; a++) {
+      const dr = a - r, dc = perm[a] - c;
+      const d2 = dr * dr + dc * dc;
+      if (d2 < minD2) { minD2 = d2; nearest = [{ dr, dc }]; }
+      else if (d2 === minD2) { nearest.push({ dr, dc }); }
+    }
+    return [...new Set(nearest.map(({ dr, dc }) => wedgeIndex(dr, dc)))];
+  }
+
   function computeClueGrid(perm, n) {
-    const critters = perm.map((c, r) => ({ r, c }));
     const grid = Array.from({ length: n }, () => Array(n).fill(null));
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
         if (perm[r] === c) continue; // critter cell: no clue rendered here
-        let minD2 = Infinity;
-        let nearest = [];
-        for (const a of critters) {
-          const dr = a.r - r, dc = a.c - c;
-          const d2 = dr * dr + dc * dc;
-          if (d2 < minD2) { minD2 = d2; nearest = [{ dr, dc }]; }
-          else if (d2 === minD2) { nearest.push({ dr, dc }); }
-        }
-        const wedges = new Set(nearest.map(({ dr, dc }) => wedgeIndex(dr, dc)));
-        grid[r][c] = wedges.size > 1 ? TIE : ARROWS[[...wedges][0]];
+        const wedges = nearestWedges(perm, n, r, c);
+        grid[r][c] = wedges.length > 1 ? TIE : ARROWS[wedges[0]];
       }
     }
     return grid;
@@ -121,6 +138,8 @@
       total: n * n - n,
       roundOver: false,
       history: [],
+      pulseArmed: false,
+      decodeArmed: false,
     };
     el.total.textContent = state.total;
     el.critters.textContent = state.n;
@@ -222,6 +241,76 @@
     updateStats();
   }
 
+  function countCrittersInArea(perm, n, r, c) {
+    let count = 0;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || rr >= n || cc < 0 || cc >= n) continue;
+        if (perm[rr] === cc) count++;
+      }
+    }
+    return count;
+  }
+
+  function togglePulseArm() {
+    if (state.roundOver) return;
+    if (state.pulseArmed) { state.pulseArmed = false; updateStats(); return; }
+    if (coins < PULSE_COST) return;
+    state.decodeArmed = false;
+    state.pulseArmed = true;
+    updateStats();
+  }
+
+  function usePulseAt(r, c) {
+    state.pulseArmed = false;
+    if (coins < PULSE_COST) { updateStats(); return; }
+    ensureBoardResolved();
+    const count = countCrittersInArea(state.perm, state.n, r, c);
+    coins -= PULSE_COST;
+    highlightArea(r, c);
+    showToast(`Pulse: ${count} critter${count === 1 ? '' : 's'} in that 3×3 area`);
+    updateStats();
+  }
+
+  function highlightArea(r, c) {
+    const n = state.n;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || rr >= n || cc < 0 || cc >= n) continue;
+        const div = el.grid.children[rr * n + cc];
+        if (!div) continue;
+        div.classList.add('pulse-highlight');
+        setTimeout(() => div.classList.remove('pulse-highlight'), 900);
+      }
+    }
+  }
+
+  function toggleDecodeArm() {
+    if (state.roundOver) return;
+    if (state.decodeArmed) { state.decodeArmed = false; updateStats(); return; }
+    if (coins < DECODE_COST) return;
+    state.pulseArmed = false;
+    state.decodeArmed = true;
+    updateStats();
+  }
+
+  function useDecodeAt(r, c) {
+    const cell = state.cells[r][c];
+    if (cell.status !== 'revealed' || state.grid[r][c] !== TIE) {
+      showToast('Decode only works on a revealed ✦ tile.');
+      return;
+    }
+    state.decodeArmed = false;
+    coins -= DECODE_COST;
+    const wedges = nearestWedges(state.perm, state.n, r, c);
+    cell.decodedWedges = wedges;
+    showToast(`Decoded: tied between ${wedges.map(i => ARROWS[i]).join(' and ')}`);
+    updateStats();
+    render();
+  }
+
   function offerContinue() {
     state.roundOver = true;
     el.continueCoinBtn.disabled = coins < 1;
@@ -244,7 +333,7 @@
   }
 
   const LONG_PRESS_MS = 450;
-  const MOVE_TOLERANCE_PX = 10;
+  const MOVE_TOLERANCE_PX = 16; // touch jitter on Android runs higher than a mouse - too tight a tolerance cancels the hold
   let pressTimer = null;
   let pressStart = null;
   let longPressFired = false;
@@ -257,6 +346,13 @@
   function attachCellGestures(div, r, c) {
     div.addEventListener('pointerdown', (e) => {
       if (e.button !== undefined && e.button !== 0) return; // right-click handled via contextmenu
+      // Claim the gesture so Android Chrome's own touch-hold/scroll arbitration can't
+      // pre-empt it with a pointercancel before our timer fires (this is why long-press
+      // worked on iOS Safari, which doesn't compete for the gesture the same way, but
+      // silently failed on Android without an explicit capture + touch-action: none).
+      if (e.pointerId !== undefined && div.setPointerCapture) {
+        try { div.setPointerCapture(e.pointerId); } catch (err) { /* unsupported, ignore */ }
+      }
       longPressFired = false;
       pressStart = { x: e.clientX, y: e.clientY };
       pressTimer = setTimeout(() => {
@@ -277,6 +373,8 @@
     });
     div.addEventListener('click', () => {
       if (longPressFired) { longPressFired = false; return; }
+      if (state.pulseArmed) { usePulseAt(r, c); return; }
+      if (state.decodeArmed) { useDecodeAt(r, c); return; }
       tapCell(r, c);
     });
   }
@@ -287,6 +385,19 @@
     el.found.textContent = state.revealed;
     el.sniffBtn.disabled = state.roundOver || coins < 1 || !hasHiddenCritters();
     el.rewindBtn.disabled = state.roundOver || coins < 1 || !state.history.length;
+
+    const pulseUnlocked = state.n >= PULSE_MIN_GRID;
+    el.pulseBtn.style.display = pulseUnlocked ? '' : 'none';
+    if (pulseUnlocked) {
+      el.pulseBtn.disabled = state.roundOver || (!state.pulseArmed && coins < PULSE_COST);
+      el.pulseBtn.textContent = state.pulseArmed ? 'Pulse: tap a tile…' : `Pulse · ${PULSE_COST} 🪙`;
+      el.pulseBtn.classList.toggle('active', state.pulseArmed);
+    }
+
+    el.decodeBtn.disabled = state.roundOver || (!state.decodeArmed && coins < DECODE_COST);
+    el.decodeBtn.textContent = state.decodeArmed ? 'Decode: tap a ✦ tile…' : `Decode · ${DECODE_COST} 🪙`;
+    el.decodeBtn.classList.toggle('active', state.decodeArmed);
+
     el.shieldBtn.disabled = state.roundOver || coins < 1 || streakShieldArmed;
     el.shieldBtn.textContent = streakShieldArmed ? 'Shield: armed 🛡️' : 'Shield · 1 🪙';
   }
@@ -297,8 +408,11 @@
       for (let c = 0; c < state.n; c++) {
         const cell = state.cells[r][c];
         const div = document.createElement('div');
-        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '');
-        if (cell.status === 'revealed') {
+        const decoded = cell.status === 'revealed' && cell.decodedWedges;
+        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '');
+        if (decoded) {
+          div.textContent = cell.decodedWedges.map(i => ARROWS[i]).join('');
+        } else if (cell.status === 'revealed') {
           div.textContent = state.grid[r][c];
         } else if (cell.status === 'critter') {
           div.textContent = ANIMALS[r % ANIMALS.length];
@@ -341,12 +455,17 @@
 
   el.continueDeclineBtn.addEventListener('click', () => {
     el.continueOverlay.classList.add('hidden');
-    if (streakShieldArmed) streakShieldArmed = false; // shield spent protecting the streak through this reset
+    if (streakShieldArmed) {
+      streakShieldArmed = false; // shield spent protecting the streak through this reset
+      showToast('🛡️ Shield used — your streak is protected.');
+    }
     startRound();
   });
 
   el.sniffBtn.addEventListener('click', useSniff);
   el.rewindBtn.addEventListener('click', useRewind);
+  el.pulseBtn.addEventListener('click', togglePulseArm);
+  el.decodeBtn.addEventListener('click', toggleDecodeArm);
   el.shieldBtn.addEventListener('click', useShield);
 
   startRound();

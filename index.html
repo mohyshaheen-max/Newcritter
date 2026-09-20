@@ -13,7 +13,7 @@
     <p><strong>Tap</strong> a tile to reveal it. Empty is always safe and points toward the nearest critter (✦ = tied). A critter costs a life — 3 per round.</p>
     <p><strong>Hold or right-click</strong> a tile to flag it as a reminder — optional, free, never required.</p>
     <p>Win by revealing every tile that isn't a critter.</p>
-    <p>Power-ups (below) cost 1 🪙 each: Sniff reveals a critter, Rewind undoes your last tap, Shield saves your streak through one reset.</p>
+    <p>Power-ups (below): Sniff reveals a critter, Rewind undoes your last tap, Pulse counts critters in a 3×3 area, Decode reveals a ✦ tile's tied directions, Shield saves your streak through one reset.</p>
   </div>
 
   <div class="stats">
@@ -30,6 +30,8 @@
   <div class="controls">
     <button class="btn-secondary" id="sniffBtn">Sniff · 1 🪙</button>
     <button class="btn-secondary" id="rewindBtn">Rewind · 1 🪙</button>
+    <button class="btn-secondary" id="pulseBtn">Pulse · 2 🪙</button>
+    <button class="btn-secondary" id="decodeBtn">Decode · 2 🪙</button>
     <button class="btn-secondary" id="shieldBtn">Shield · 1 🪙</button>
   </div>
 
@@ -58,6 +60,8 @@
       </div>
     </div>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <script src="game.js"></script>
 </body>
