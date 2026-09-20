@@ -9,7 +9,11 @@
 <body>
 
   <h1>Compass Critters</h1>
-  <p class="subtitle">Tap a tile. Empty tiles are always safe and show the way to the nearest critter. Tapping a critter costs a life.</p>
+  <div class="rules">
+    <p><strong>Tap</strong> a tile to reveal it. Empty is always safe and points toward the nearest critter (✦ = tied). A critter costs a life — 3 per round.</p>
+    <p><strong>Hold or right-click</strong> a tile to flag it as a reminder — optional, free, never required.</p>
+    <p>Win by revealing every tile that isn't a critter.</p>
+  </div>
 
   <div class="stats">
     <div class="stat" id="livesStat">❤️❤️❤️</div>
@@ -25,8 +29,6 @@
   <div class="controls">
     <button class="btn-primary" id="newRoundBtn">New round</button>
   </div>
-
-  <p class="legend">Arrows point toward the nearest hidden critter using a true 45° read — not a rough quadrant. ✦ means two critters are exactly tied for nearest. Tap a tile to reveal it; press and hold (or right-click) to flag one you're avoiding — flagging is optional bookkeeping to avoid a misclick, never required to win. Lose all 3 lives and you'll be offered a continue before the round resets.</p>
 
   <div class="overlay hidden" id="winOverlay">
     <div class="modal">
