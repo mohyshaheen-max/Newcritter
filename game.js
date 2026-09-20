@@ -11,7 +11,6 @@
     coins: document.getElementById('coinsVal'),
     found: document.getElementById('foundVal'),
     total: document.getElementById('totalVal'),
-    flagModeBtn: document.getElementById('flagModeBtn'),
     newRoundBtn: document.getElementById('newRoundBtn'),
     winOverlay: document.getElementById('winOverlay'),
     winStats: document.getElementById('winStats'),
@@ -112,7 +111,6 @@
       lives: MAX_LIVES,
       revealed: 0,
       total: n * n - n,
-      flagMode: false,
       roundOver: false,
     };
     el.total.textContent = state.total;
@@ -133,16 +131,18 @@
     state.firstTapDone = true;
   }
 
+  function toggleFlag(r, c) {
+    if (state.roundOver) return;
+    const cell = state.cells[r][c];
+    if (cell.status !== 'hidden') return;
+    cell.flagged = !cell.flagged;
+    render();
+  }
+
   function tapCell(r, c) {
     if (state.roundOver) return;
     const cell = state.cells[r][c];
     if (cell.status !== 'hidden') return;
-
-    if (state.flagMode) {
-      cell.flagged = !cell.flagged;
-      render();
-      return;
-    }
     if (cell.flagged) return;
 
     if (!state.firstTapDone) resolveFirstTap(r, c);
@@ -183,6 +183,44 @@
     }, 300);
   }
 
+  const LONG_PRESS_MS = 450;
+  const MOVE_TOLERANCE_PX = 10;
+  let pressTimer = null;
+  let pressStart = null;
+  let longPressFired = false;
+
+  function cancelPress() {
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    pressStart = null;
+  }
+
+  function attachCellGestures(div, r, c) {
+    div.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return; // right-click handled via contextmenu
+      longPressFired = false;
+      pressStart = { x: e.clientX, y: e.clientY };
+      pressTimer = setTimeout(() => {
+        longPressFired = true;
+        toggleFlag(r, c);
+      }, LONG_PRESS_MS);
+    });
+    div.addEventListener('pointermove', (e) => {
+      if (!pressStart) return;
+      if (Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > MOVE_TOLERANCE_PX) cancelPress();
+    });
+    div.addEventListener('pointerup', cancelPress);
+    div.addEventListener('pointerleave', cancelPress);
+    div.addEventListener('pointercancel', cancelPress);
+    div.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      toggleFlag(r, c);
+    });
+    div.addEventListener('click', () => {
+      if (longPressFired) { longPressFired = false; return; }
+      tapCell(r, c);
+    });
+  }
+
   function updateStats() {
     el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(MAX_LIVES - state.lives);
     el.coins.textContent = coins;
@@ -203,17 +241,11 @@
         } else if (cell.flagged) {
           div.textContent = '🚩';
         }
-        div.addEventListener('click', () => tapCell(r, c));
+        attachCellGestures(div, r, c);
         el.grid.appendChild(div);
       }
     }
   }
-
-  el.flagModeBtn.addEventListener('click', () => {
-    state.flagMode = !state.flagMode;
-    el.flagModeBtn.textContent = state.flagMode ? 'Flag mode: on' : 'Flag mode: off';
-    el.flagModeBtn.classList.toggle('active', state.flagMode);
-  });
 
   el.newRoundBtn.addEventListener('click', () => {
     el.winOverlay.classList.add('hidden');
