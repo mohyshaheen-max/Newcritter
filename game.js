@@ -174,11 +174,52 @@
     return state.perm.some((c, r) => state.cells[r][c].status === 'hidden');
   }
 
+  // True only when every hidden critter (and nothing else) is flagged - a single wrong or
+  // missing flag returns false, so this can't false-trigger on a partial or incorrect guess.
+  function allCrittersFlaggedCorrectly() {
+    if (!state.firstTapDone) return false;
+    let flaggedCount = 0;
+    for (let r = 0; r < state.n; r++) {
+      for (let c = 0; c < state.n; c++) {
+        if (!state.cells[r][c].flagged) continue;
+        if (state.perm[r] !== c) return false;
+        flaggedCount++;
+      }
+    }
+    return flaggedCount === state.n;
+  }
+
+  // Reveals everything else at once so flagging every critter correctly clears the round
+  // without also having to tap every remaining tile one by one - flagging is still optional
+  // per spec, this is just a faster path to the same win condition on bigger boards.
+  function autoCompleteRound() {
+    for (let r = 0; r < state.n; r++) {
+      for (let c = 0; c < state.n; c++) {
+        const cell = state.cells[r][c];
+        if (cell.status !== 'hidden') continue;
+        cell.flagged = false;
+        if (state.perm[r] === c) {
+          cell.status = 'critter';
+        } else {
+          cell.status = 'revealed';
+          state.revealed++;
+        }
+      }
+    }
+    updateStats();
+    render();
+    winRound();
+  }
+
   function toggleFlag(r, c) {
     if (state.roundOver) return;
     const cell = state.cells[r][c];
     if (cell.status !== 'hidden') return;
     cell.flagged = !cell.flagged;
+    if (cell.flagged && allCrittersFlaggedCorrectly()) {
+      autoCompleteRound();
+      return;
+    }
     render();
   }
 
@@ -345,36 +386,54 @@
   let pressTimer = null;
   let pressStart = null;
   let longPressFired = false;
+  let lastTouchTime = 0; // lets us ignore the synthetic mousedown Android fires after a real touch
 
   function cancelPress() {
     if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
     pressStart = null;
   }
 
+  function startPress(r, c, x, y) {
+    longPressFired = false;
+    pressStart = { x, y };
+    pressTimer = setTimeout(() => {
+      longPressFired = true;
+      toggleFlag(r, c);
+    }, LONG_PRESS_MS);
+  }
+
+  function movePress(x, y) {
+    if (!pressStart) return;
+    if (Math.hypot(x - pressStart.x, y - pressStart.y) > MOVE_TOLERANCE_PX) cancelPress();
+  }
+
+  // Plain touch/mouse events instead of the Pointer Events + setPointerCapture approach we
+  // tried before: that still failed on Android Chrome and Samsung Internet (worked on iOS
+  // Safari only). Passive touch listeners don't fight Android's compositor for ownership of
+  // the gesture at all - we're not claiming or cancelling anything, just watching timing -
+  // which sidesteps whatever was pre-empting the pointer sequence before our timer could fire.
   function attachCellGestures(div, r, c) {
-    div.addEventListener('pointerdown', (e) => {
-      if (e.button !== undefined && e.button !== 0) return; // right-click handled via contextmenu
-      // Claim the gesture so Android Chrome's own touch-hold/scroll arbitration can't
-      // pre-empt it with a pointercancel before our timer fires (this is why long-press
-      // worked on iOS Safari, which doesn't compete for the gesture the same way, but
-      // silently failed on Android without an explicit capture + touch-action: none).
-      if (e.pointerId !== undefined && div.setPointerCapture) {
-        try { div.setPointerCapture(e.pointerId); } catch (err) { /* unsupported, ignore */ }
-      }
-      longPressFired = false;
-      pressStart = { x: e.clientX, y: e.clientY };
-      pressTimer = setTimeout(() => {
-        longPressFired = true;
-        toggleFlag(r, c);
-      }, LONG_PRESS_MS);
+    div.addEventListener('touchstart', (e) => {
+      lastTouchTime = Date.now();
+      const t = e.touches[0];
+      if (t) startPress(r, c, t.clientX, t.clientY);
+    }, { passive: true });
+    div.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (t) movePress(t.clientX, t.clientY);
+    }, { passive: true });
+    div.addEventListener('touchend', cancelPress);
+    div.addEventListener('touchcancel', cancelPress);
+
+    div.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (Date.now() - lastTouchTime < 800) return; // this is the synthetic mouse event that follows a touch, not a real click
+      startPress(r, c, e.clientX, e.clientY);
     });
-    div.addEventListener('pointermove', (e) => {
-      if (!pressStart) return;
-      if (Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > MOVE_TOLERANCE_PX) cancelPress();
-    });
-    div.addEventListener('pointerup', cancelPress);
-    div.addEventListener('pointerleave', cancelPress);
-    div.addEventListener('pointercancel', cancelPress);
+    div.addEventListener('mousemove', (e) => movePress(e.clientX, e.clientY));
+    div.addEventListener('mouseup', cancelPress);
+    div.addEventListener('mouseleave', cancelPress);
+
     div.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       toggleFlag(r, c);
