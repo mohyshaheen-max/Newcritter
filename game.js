@@ -210,9 +210,14 @@
     state.firstTapDone = true;
   }
 
-  function hasHiddenCritters() {
+  // Only counts critters Sniff would actually be useful for - a hidden critter you've
+  // already correctly flagged is nothing new to reveal, so it shouldn't keep Sniff enabled.
+  function hasSniffableCritters() {
     if (!state.firstTapDone) return true;
-    return state.perm.some((c, r) => state.cells[r][c].status === 'hidden');
+    return state.perm.some((c, r) => {
+      const cell = state.cells[r][c];
+      return cell.status === 'hidden' && !cell.flagged;
+    });
   }
 
   // True once every critter is accounted for - either correctly flagged or already revealed
@@ -311,9 +316,10 @@
     const hidden = [];
     for (let r = 0; r < state.n; r++) {
       const c = state.perm[r];
-      if (state.cells[r][c].status === 'hidden') hidden.push([r, c]);
+      const cell = state.cells[r][c];
+      if (cell.status === 'hidden' && !cell.flagged) hidden.push([r, c]);
     }
-    if (!hidden.length) return;
+    if (!hidden.length) return; // everything left is already flagged - nothing new to reveal
     const [r, c] = hidden[Math.floor(Math.random() * hidden.length)];
     coins--;
     state.cells[r][c] = { status: 'critter', flagged: false };
@@ -536,7 +542,7 @@
     el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(MAX_LIVES - state.lives);
     el.coins.textContent = coins;
     el.found.textContent = state.revealed;
-    el.sniffBtn.disabled = state.roundOver || coins < 1 || !hasHiddenCritters();
+    el.sniffBtn.disabled = state.roundOver || coins < 1 || !hasSniffableCritters();
     el.rewindBtn.disabled = state.roundOver || coins < 1 || !state.history.length;
 
     const pulseUnlocked = state.n >= PULSE_MIN_GRID;
