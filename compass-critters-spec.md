@@ -46,11 +46,11 @@ No move budget and no rationed information: every clue is always available for t
 | Rewind | Undoes your last action | 1 coin | Level 1 |
 | Pulse | Scans a 3×3 area (clipped at edges) and returns a count of critters inside; immune to masking | 3 coins | 5×5 and above |
 | Decode | Reveals the exact tied directions behind a ✦ on a tile you've already revealed | 2 coins | Level 1 |
-| Ward | Absorbs your next critter hit entirely - no life lost. Stays armed across rounds until triggered | 2 coins | Level 1 |
+| Ward | Covers exactly your next tap: no life lost if it's a critter, spent for nothing if it's safe | 1 coin | Level 1 |
 | Continue | One extra life the moment your 3rd life is lost, before the round resets | 1 coin or rewarded ad | Level 1 |
 | Streak Shield | Protects your streak through one round-reset or one missed day | Earned or purchased | Level 1 |
 
-Ward and Streak Shield are deliberately separate systems: Ward protects an individual life from a critter tap, Streak Shield protects the daily streak when a round fully resets. Arming one has no effect on the other.
+Ward and Streak Shield are deliberately separate systems: Ward is one-shot insurance on your very next tap, Streak Shield protects the daily streak when a round fully resets. Arming one has no effect on the other.
 
 Decode exists specifically so ✦ ties can stay an intentionally weak, hard-to-triangulate clue by default (see Difficulty progression) without leaving players stuck — it's an opt-in, paid way to unstick a tie instead of the base game revealing tied directions for free.
 

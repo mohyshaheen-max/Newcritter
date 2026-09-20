@@ -7,7 +7,7 @@
   const PULSE_COST = 3; // bumped from 2: on a 5x5 board a 3x3 scan can pin a 3-row block's columns almost exactly, stronger than a 1-coin Sniff
   const PULSE_MIN_GRID = 5; // per product decision: unlocks at 5x5 and above
   const DECODE_COST = 2;
-  const WARD_COST = 2;
+  const WARD_COST = 1; // insurance for one uncertain tap, often wasted on a safe tile - not worth Pulse/Decode's price, which both guarantee useful info
 
   const el = {
     grid: document.getElementById('grid'),
@@ -49,9 +49,9 @@
   // counter to protect yet (that's build-order step 4), so this just tracks arm/consume state.
   let streakShieldArmed = false;
 
-  // A separate power-up from Streak Shield: absorbs your next critter hit (no life lost)
-  // whenever it happens, rather than protecting the streak on a round reset. Also survives
-  // round resets, since it's a banked protection the player paid for and hasn't used yet.
+  // A separate power-up from Streak Shield: insurance on exactly your very next tap (consumed
+  // by it regardless of outcome), not the streak. Survives round resets since it's a banked,
+  // paid-for protection that hasn't been spent on a tap yet.
   let lifeWardArmed = false;
 
   let state = null;
@@ -240,12 +240,16 @@
 
     if (!state.firstTapDone) resolveFirstTap(r, c);
 
-    state.history.push({ r, c, lives: state.lives, revealed: state.revealed });
+    // Ward covers exactly this one tap, win or lose - it's consumed here regardless of
+    // outcome, not left standing until some future critter hit happens to trigger it.
+    const wardCoveredThisTap = lifeWardArmed;
+    if (wardCoveredThisTap) lifeWardArmed = false;
+
+    state.history.push({ r, c, lives: state.lives, revealed: state.revealed, wardConsumed: wardCoveredThisTap });
 
     if (state.perm[r] === c) {
       cell.status = 'critter';
-      if (lifeWardArmed) {
-        lifeWardArmed = false;
+      if (wardCoveredThisTap) {
         showToast('🛡️ Ward absorbed that hit — no life lost.');
       } else {
         state.lives--;
@@ -260,6 +264,7 @@
     } else {
       cell.status = 'revealed';
       state.revealed++;
+      if (wardCoveredThisTap) showToast('🛡️ Ward used — that tap was safe anyway.');
       updateStats();
       render();
       if (state.revealed >= state.total) winRound();
@@ -290,6 +295,7 @@
     state.cells[last.r][last.c] = { status: 'hidden', flagged: false };
     state.lives = last.lives;
     state.revealed = last.revealed;
+    if (last.wardConsumed) lifeWardArmed = true; // undoing the tap it covered gives the ward back too
     updateStats();
     render();
   }
