@@ -2,6 +2,16 @@
   const MIN_GRID = 3;
   const MAX_GRID = 8; // spec's brute-force-feasible ceiling; past this, generation needs a constraint solver instead
   const MAX_LIVES = 3;
+
+  // Difficulty ladder (product decision 2026-09-22): for each grid size, critter count ramps
+  // from 1 up to the grid size (the old "always equals grid size" rule is now just the top of
+  // each size's ramp), 3 wins per critter-count tier before advancing. 3+4+5+6+7+8 = 33 tiers,
+  // 99 wins to clear the whole ladder once - replaces the old 6-tier "1 win per grid size" scheme.
+  const TIER_WINS_REQUIRED = 3;
+  const TIERS = [];
+  for (let n = MIN_GRID; n <= MAX_GRID; n++) {
+    for (let c = 1; c <= n; c++) TIERS.push({ gridSize: n, critterCount: c });
+  }
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
   const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻', '🦝', '🐨', '🦔'];
@@ -46,10 +56,11 @@
     toastTimer = setTimeout(() => el.toast.classList.remove('visible'), 2400);
   }
 
-  // 0-indexed; grid size = MIN_GRID + level, capped at MAX_GRID. One win advances it (no
-  // demotion on a loss); persisted, since it's overall progress.
-  let level = 0;
-  function currentGridSize() { return Math.min(MIN_GRID + level, MAX_GRID); }
+  // 0-indexed into TIERS. tierWins counts wins accumulated at the current tier (resets to 0 on
+  // advancing); no demotion on a loss. Both persisted, since it's overall progress.
+  let tierIndex = 0;
+  let tierWins = 0;
+  function currentTier() { return TIERS[Math.min(tierIndex, TIERS.length - 1)]; }
 
   const STARTING_COINS = 5; // a small welcome balance for a brand new player; returning players load their real saved total
   let coins = STARTING_COINS;
@@ -105,7 +116,7 @@
   function persistSave() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        version: 1, coins, streak, lastExtendDate, lastDecidedDate, level,
+        version: 2, coins, streak, lastExtendDate, lastDecidedDate, tierIndex, tierWins,
         streakShieldArmed, lifeWardArmed,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
@@ -118,7 +129,15 @@
     if (typeof saved.streak === 'number') streak = saved.streak;
     if (typeof saved.lastExtendDate === 'string') lastExtendDate = saved.lastExtendDate;
     if (typeof saved.lastDecidedDate === 'string') lastDecidedDate = saved.lastDecidedDate;
-    if (typeof saved.level === 'number') level = saved.level;
+    // v1 saves only had "level" (one tier per grid size) - approximate by landing on that grid
+    // size's first (1-critter) tier rather than losing the progress entirely.
+    if (saved.version === 2 && typeof saved.tierIndex === 'number') {
+      tierIndex = saved.tierIndex;
+      tierWins = typeof saved.tierWins === 'number' ? saved.tierWins : 0;
+    } else if (typeof saved.level === 'number') {
+      tierIndex = TIERS.findIndex(t => t.gridSize === MIN_GRID + saved.level && t.critterCount === 1);
+      if (tierIndex < 0) tierIndex = 0;
+    }
     streakShieldArmed = !!saved.streakShieldArmed;
     lifeWardArmed = !!saved.lifeWardArmed;
   })();
@@ -166,6 +185,93 @@
     return results;
   }
 
+  function combinationsOf(arr, k) {
+    const results = [];
+    (function build(start, chosen) {
+      if (chosen.length === k) { results.push(chosen.slice()); return; }
+      for (let i = start; i < arr.length; i++) {
+        chosen.push(arr[i]);
+        build(i + 1, chosen);
+        chosen.pop();
+      }
+    })(0, []);
+    return results;
+  }
+
+  function factorial(k) { let r = 1; for (let i = 2; i <= k; i++) r *= i; return r; }
+  function binomial(n, k) { let r = 1; for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1); return Math.round(r); }
+
+  // A "perm" is length n; perm[row] is the critter's column, or null if that row has no
+  // critter. Full permutations (c === n) are just the c < n case with nothing left null.
+  function partialPermutationsOf(n, c) {
+    if (c >= n) return permutationsOf(n);
+    if (c <= 0) return [Array(n).fill(null)];
+    const indices = Array.from({ length: n }, (_, i) => i);
+    const rowSubsets = combinationsOf(indices, c);
+    const colSubsets = combinationsOf(indices, c);
+    const bijections = permutationsOf(c);
+    const results = [];
+    for (const rows of rowSubsets) {
+      for (const cols of colSubsets) {
+        for (const bij of bijections) {
+          const perm = Array(n).fill(null);
+          for (let i = 0; i < c; i++) perm[rows[i]] = cols[bij[i]];
+          results.push(perm);
+        }
+      }
+    }
+    return results;
+  }
+
+  function shuffledIndices(n) {
+    const arr = Array.from({ length: n }, (_, i) => i);
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function randomPartialPermutation(n, c) {
+    const rows = shuffledIndices(n).slice(0, c);
+    const cols = shuffledIndices(n).slice(0, c);
+    const perm = Array(n).fill(null);
+    for (let i = 0; i < c; i++) perm[rows[i]] = cols[i];
+    return perm;
+  }
+
+  // Some (gridSize, critterCount) combinations - mid-range critter counts on large boards -
+  // have a placement space in the hundreds of thousands (a 6-critter 8x8 board has 564,480
+  // possible placements), far past what's safe to enumerate and cross-check exhaustively in a
+  // browser (the full-permutation 8x8 case, 40,320 placements, already takes ~350ms). Past
+  // MAX_EXHAUSTIVE_SPACE, this samples a large deduplicated random subset to serve as the
+  // comparison universe instead of the true full space. That makes "provably unique" become
+  // "verified unique against a large representative sample" for those specific tiers - a real,
+  // documented tradeoff (see SPEC.md), not the same guarantee as everywhere else.
+  const MAX_EXHAUSTIVE_SPACE = 50000;
+
+  function sampleUniverse(n, c, size) {
+    const universe = [];
+    const seen = new Set();
+    const maxAttempts = size * 3;
+    let attempts = 0;
+    while (universe.length < size && attempts < maxAttempts) {
+      attempts++;
+      const perm = randomPartialPermutation(n, c);
+      const key = perm.join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      universe.push(perm);
+    }
+    return universe;
+  }
+
+  function getPlacementSpace(n, c) {
+    if (c >= n) return permutationsOf(n);
+    const spaceSize = binomial(n, c) * binomial(n, c) * factorial(c);
+    return spaceSize <= MAX_EXHAUSTIVE_SPACE ? partialPermutationsOf(n, c) : sampleUniverse(n, c, MAX_EXHAUSTIVE_SPACE);
+  }
+
   function wedgeIndex(dr, dc) {
     // dr/dc are (critter - tile). Flip dr so "up" (toward row 0) reads as north, matching the arrow glyphs.
     let deg = Math.atan2(-dr, dc) * 180 / Math.PI;
@@ -177,6 +283,7 @@
     let minD2 = Infinity;
     let nearest = [];
     for (let a = 0; a < n; a++) {
+      if (perm[a] === null) continue; // no critter in this row - "null - c" would silently coerce to -c otherwise
       const dr = a - r, dc = perm[a] - c;
       const d2 = dr * dr + dc * dc;
       if (d2 < minD2) { minD2 = d2; nearest = [{ dr, dc }]; }
@@ -190,6 +297,7 @@
   function nearestDistanceSquared(perm, n, r, c) {
     let minD2 = Infinity;
     for (let a = 0; a < n; a++) {
+      if (perm[a] === null) continue;
       const dr = a - r, dc = perm[a] - c;
       const d2 = dr * dr + dc * dc;
       if (d2 < minD2) minD2 = d2;
@@ -251,13 +359,12 @@
 
   // Per spec: "higher tiers bias generation toward more ties, which are genuinely harder to
   // triangulate." Sorts the sampled candidates by tie count and keeps a window around the
-  // percentile matching the current level - low levels skew toward the least-tied (easiest)
-  // candidates available, the top level skews toward the most-tied ones. Everything downstream
+  // percentile matching the current tier - early tiers skew toward the least-tied (easiest)
+  // candidates available, the last tier skews toward the most-tied ones. Everything downstream
   // still just picks uniformly at random from the (now pre-biased) pool.
-  function biasPoolByLevel(pool) {
+  function biasPoolByTier(pool) {
     if (pool.length <= 1) return pool;
-    const totalLevels = MAX_GRID - MIN_GRID + 1;
-    const target = totalLevels > 1 ? Math.min(level, totalLevels - 1) / (totalLevels - 1) : 0;
+    const target = TIERS.length > 1 ? tierIndex / (TIERS.length - 1) : 0;
     const sorted = pool
       .map(entry => ({ entry, ties: tieCount(entry.grid, entry.perm.length) }))
       .sort((a, b) => a.ties - b.ties);
@@ -267,8 +374,8 @@
     return sorted.slice(start, start + windowSize).map(w => w.entry);
   }
 
-  function buildUniqueSolutionPool(n) {
-    const allPerms = permutationsOf(n);
+  function buildUniqueSolutionPool(n, c) {
+    const allPerms = getPlacementSpace(n, c);
     const poolTarget = Math.min(30, allPerms.length);
     const maxAttempts = poolTarget * 40;
     const pool = [];
@@ -287,30 +394,33 @@
       const perm = allPerms[Math.floor(Math.random() * allPerms.length)];
       pool.push({ perm, grid: computeClueGrid(perm, n) });
     }
-    return biasPoolByLevel(pool);
+    return biasPoolByTier(pool);
   }
 
   function startRound() {
-    const n = currentGridSize();
+    const tier = currentTier();
+    const n = tier.gridSize;
+    const critterCount = tier.critterCount;
     document.documentElement.style.setProperty('--grid-size', n);
     state = {
       n,
-      pool: buildUniqueSolutionPool(n),
+      critterCount,
+      pool: buildUniqueSolutionPool(n, critterCount),
       perm: null,
       grid: null,
       firstTapDone: false,
       cells: Array.from({ length: n }, () => Array.from({ length: n }, () => ({ status: 'hidden', flagged: false }))),
       lives: MAX_LIVES,
       revealed: 0,
-      total: n * n - n,
+      total: n * n - critterCount,
       roundOver: false,
       history: [],
       pulseArmed: false,
       decodeArmed: false,
     };
     el.total.textContent = state.total;
-    el.critters.textContent = state.n;
-    el.level.textContent = `Level ${level + 1} · ${n}×${n}`;
+    el.critters.textContent = critterCount;
+    el.level.textContent = `Tier ${tierIndex + 1}/${TIERS.length} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
     updateStats();
     render();
   }
@@ -318,7 +428,7 @@
   function resolveFirstTap(r, c) {
     let candidates = state.pool.filter(({ perm }) => perm[r] !== c);
     if (!candidates.length) {
-      candidates = permutationsOf(state.n)
+      candidates = getPlacementSpace(state.n, state.critterCount)
         .filter(p => p[r] !== c)
         .map(p => ({ perm: p, grid: computeClueGrid(p, state.n) }));
     }
@@ -342,6 +452,7 @@
   function hasSniffableCritters() {
     if (!state.firstTapDone) return true;
     return state.perm.some((c, r) => {
+      if (c === null) return false;
       const cell = state.cells[r][c];
       return cell.status === 'hidden' && !cell.flagged;
     });
@@ -443,6 +554,7 @@
     const hidden = [];
     for (let r = 0; r < state.n; r++) {
       const c = state.perm[r];
+      if (c === null) continue;
       const cell = state.cells[r][c];
       if (cell.status === 'hidden' && !cell.flagged) hidden.push([r, c]);
     }
@@ -584,17 +696,31 @@
     const stars = starsForRound();
     coins += stars; // 1 coin per star, per spec's proposal
     recordRoundResult(true);
-    const wasAtMax = state.n >= MAX_GRID;
-    if (!wasAtMax) level++;
-    const nextSize = currentGridSize();
+
+    const wasAtLastTier = tierIndex >= TIERS.length - 1;
+    tierWins++;
+    let tierAdvanced = false;
+    if (!wasAtLastTier && tierWins >= TIER_WINS_REQUIRED) {
+      tierIndex++;
+      tierWins = 0;
+      tierAdvanced = true;
+    }
+    const tier = currentTier();
+
     persistSave();
     updateStats();
     setTimeout(() => {
       const starText = '⭐'.repeat(stars);
-      const sizeText = wasAtMax
-        ? `You've maxed out at ${MAX_GRID}×${MAX_GRID}!`
-        : `Level ${level + 1} unlocked (${nextSize}×${nextSize})!`;
-      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${sizeText}`;
+      let progressText;
+      if (wasAtLastTier) {
+        progressText = `You've maxed out the ladder — ${MAX_GRID}×${MAX_GRID} with ${tier.critterCount} critters!`;
+      } else if (tierAdvanced) {
+        progressText = `Tier ${tierIndex + 1}/${TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
+      } else {
+        const winsNeeded = TIER_WINS_REQUIRED - tierWins;
+        progressText = `${winsNeeded} more win${winsNeeded === 1 ? '' : 's'} at this tier to advance.`;
+      }
+      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
       el.winOverlay.classList.remove('hidden');
     }, 300);
   }
