@@ -1159,21 +1159,27 @@
     tutorialActive, tutorialStep,
   });
 
-  // --- Onboarding tutorial (2026-09-21, expanded same day per feedback that the first cut was
-  // too thin): a scripted interactive walkthrough rather than a slide deck, so a new player's
-  // first taps land on real tiles and watch a real arrow/red-warning/tie/critter appear - the
-  // actual grid rendering and CSS, not a mockup. Runs on a small fixed board entirely separate
-  // from `state`/the tier ladder/coins - it's a teaching fixture, not a real round, so nothing
-  // here touches persistence except the one "seen it" flag. Covers the whole core loop
-  // (including flagging, masking, and the win condition) but deliberately NOT power-ups - those
-  // get their own intro the first time a player actually clears a tier (see winRound /
-  // POWERUPS_INTRO_SEEN_KEY above), on the theory that the core loop should land solidly before
-  // another system stacks on top of it. Replayable any time via the How to play button.
+  // --- Onboarding tutorial (2026-09-21, expanded same day per feedback the first cut was too
+  // thin, then trimmed again same day per feedback that expanded cut over-explained): a scripted
+  // interactive walkthrough rather than a slide deck, so a new player's first taps land on real
+  // tiles and watch a real arrow/red-warning/tie/critter appear - the actual grid rendering and
+  // CSS, not a mockup. Runs on a small fixed board entirely separate from `state`/the tier
+  // ladder/coins - it's a teaching fixture, not a real round, so nothing here touches
+  // persistence except the one "seen it" flag. Text is kept deliberately short - one punchy line
+  // per step, not a lecture. Masking specifically isn't explained in words at all anymore: the
+  // 'explore' step just lets the player go find the second critter themselves, discovering "the
+  // first few arrows never mentioned this one" by playing rather than being told. Covers the
+  // whole core loop but deliberately NOT power-ups - those get their own intro the first time a
+  // player actually clears a tier (see winRound / POWERUPS_INTRO_SEEN_KEY above), on the theory
+  // that the core loop should land solidly before another system stacks on top of it. Replayable
+  // any time via the How to play button.
   //
-  // Each step is one of three kinds:
-  //   'tap'  - highlight one tile, wait for it to be tapped, then show what appeared
-  //   'flag' - highlight one tile, wait for it to be held/right-clicked (flagged), then explain
-  //   'info' - no board interaction; just a caption and a Next button
+  // Each step is one of four kinds:
+  //   'tap'     - highlight one tile, wait for it to be tapped, then show what appeared
+  //   'flag'    - highlight one tile, wait for it to be held/right-clicked (flagged), then explain
+  //   'explore' - no highlighted tile; any hidden unflagged tile can be tapped and reveals
+  //               normally, and the step only completes once a critter tile is tapped
+  //   'info'    - no board interaction; just a caption and a Next button
   const TUTORIAL_SEEN_KEY = 'compassCritters.tutorialSeen.v1';
   const TUTORIAL_N = 5;
   const TUTORIAL_PERM = [0, null, null, null, 4]; // critters at (0,0) and (4,4) on a 5x5 board
@@ -1181,46 +1187,42 @@
   const TUTORIAL_STEPS = [
     {
       kind: 'tap', r: 0, c: 3,
-      prompt: 'Tap the glowing tile to reveal it. Your very first tap each round is always guaranteed safe.',
-      explain: 'That arrow points toward the nearest hidden critter, using 8 compass directions. Every direction is a true 45° wedge, so it always reads the same width no matter which way it’s pointing.',
+      prompt: 'Tap the glowing tile!',
+      explain: 'That arrow points to the closest critter. Follow it!',
     },
     {
       kind: 'tap', r: 0, c: 2,
-      prompt: 'Tap the next glowing tile.',
-      explain: 'When an arrow turns red, the nearest critter is within just 2 tiles — a proximity warning layered on top of the direction.',
+      prompt: 'Tap again!',
+      explain: 'Red arrow = getting close!',
     },
     {
       kind: 'tap', r: 2, c: 2,
-      prompt: 'One more — tap the glowing tile.',
-      explain: '✦ means two critters are exactly tied for nearest, in different directions. It’s deliberately fuzzy on its own — cross-reference a tile you’ve already revealed nearby to narrow it down, or spend a Decode power-up later to see the tied directions directly.',
-    },
-    {
-      kind: 'info',
-      text: 'One more thing about that first arrow: it only ever points to the ONE nearest critter. There’s a second critter on this very board, but it stayed completely invisible from that tile because the other one was closer. That’s called masking — a farther critter is hidden until you’re standing closer to it than to anything else.',
+      prompt: 'One more!',
+      explain: '✦ = two critters tied for closest!',
     },
     {
       kind: 'flag', r: 4, c: 4,
-      prompt: 'Press and hold (or right-click on desktop) the glowing tile to flag it as a reminder.',
-      explain: 'Flagging marks a tile you’re confident about — useful for tiles you suspect hide a critter. It’s optional bookkeeping to avoid a misclick, purely free, and never required to win. Hold again to unflag.',
+      prompt: 'Hold (or right-click) this tile to flag it!',
+      explain: 'Flags mark tiles you’re sure about. Totally optional!',
     },
     {
-      kind: 'tap', r: 0, c: 0,
-      prompt: 'Last interactive one — this tile is different. Tap it anyway.',
-      explain: 'That was a critter — it costs a life, 3 per round. Lose all 3 and you’ll get a Continue offer (spend a coin, or watch a rewarded ad) for one more life before the round resets.',
-    },
-    {
-      kind: 'info',
-      text: 'You win a round once every tile that isn’t a critter has been safely revealed. There’s no move limit and no rationed clues — every arrow is always available. The only risk is in which tile you pick next.',
+      kind: 'explore',
+      prompt: 'One more critter is hiding — go find it!',
+      explain: 'Found it! Critters cost a life, 3 per round. Lose them all and you can Continue for one more shot.',
     },
     {
       kind: 'info',
-      text: 'Winning earns coins based on how many lives you kept (1-3 🪙 per round), and your first win or loss each day updates a daily streak 🔥. Power-ups that spend those coins to make tricky rounds easier unlock once you clear your first tier — for now, just explore with your eyes and your taps.',
+      text: 'Reveal every safe tile to win! No timer, no limited clues — just careful taps.',
+    },
+    {
+      kind: 'info',
+      text: 'Win = coins 🪙! Play every day for a streak 🔥. Power-ups unlock soon!',
     },
   ];
 
   let tutorialActive = false;
   let tutorialStep = 0;
-  let tutorialPhase = 'prompt'; // 'prompt' (waiting for the target tap/flag) or 'explain' (showing what happened) - unused by 'info' steps, which always show their text immediately
+  let tutorialPhase = 'prompt'; // 'prompt' (waiting for the target tap/flag, or still exploring) or 'explain' (showing what happened) - unused by 'info' steps, which always show their text immediately
   let tutorialCells = null; // [r][c] = { status: 'hidden'|'revealed'|'critter', flagged: bool }
 
   function renderTutorial() {
@@ -1232,7 +1234,7 @@
         const cell = tutorialCells[r][c];
         const div = document.createElement('div');
         const near = cell.status === 'revealed' && nearestDistanceSquared(TUTORIAL_PERM, TUTORIAL_N, r, c) <= NEAR_DISTANCE_SQUARED;
-        const isTarget = !isInfo && tutorialPhase === 'prompt' && r === step.r && c === step.c;
+        const isTarget = (step.kind === 'tap' || step.kind === 'flag') && tutorialPhase === 'prompt' && r === step.r && c === step.c;
         div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (near ? ' near' : '') + (isTarget ? ' tutorial-target' : '');
         if (cell.status === 'revealed') div.textContent = TUTORIAL_GRID[r][c];
         else if (cell.status === 'critter') div.textContent = ANIMALS[r % ANIMALS.length];
@@ -1248,11 +1250,22 @@
 
   function handleTutorialTap(r, c) {
     const step = TUTORIAL_STEPS[tutorialStep];
-    if (step.kind !== 'tap' || tutorialPhase !== 'prompt') return;
-    if (r !== step.r || c !== step.c) return; // guided - taps elsewhere just don't do anything
-    tutorialCells[r][c].status = TUTORIAL_PERM[r] === c ? 'critter' : 'revealed';
-    tutorialPhase = 'explain';
-    renderTutorial();
+    if (tutorialPhase !== 'prompt') return;
+    if (step.kind === 'tap') {
+      if (r !== step.r || c !== step.c) return; // guided - taps elsewhere just don't do anything
+      tutorialCells[r][c].status = TUTORIAL_PERM[r] === c ? 'critter' : 'revealed';
+      tutorialPhase = 'explain';
+      renderTutorial();
+      return;
+    }
+    if (step.kind === 'explore') {
+      const cell = tutorialCells[r][c];
+      if (cell.status !== 'hidden' || cell.flagged) return; // already revealed, or flagged out of play
+      const isCritter = TUTORIAL_PERM[r] === c;
+      cell.status = isCritter ? 'critter' : 'revealed';
+      if (isCritter) tutorialPhase = 'explain'; // found it - stays in 'prompt' otherwise, so exploring continues
+      renderTutorial();
+    }
   }
 
   function handleTutorialFlag(r, c) {
