@@ -3,18 +3,19 @@
   const MAX_GRID = 8; // spec's brute-force-feasible ceiling; past this, generation needs a constraint solver instead
   const MAX_LIVES = 3;
 
-  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23, win-count trimmed
-  // 2026-09-21 per feedback that 9 wins per grid size - 3 sub-levels x 3 wins - felt like too
-  // much of a wait): critter count alone drives solving difficulty (masking/ties), not board
-  // size - spreading a low critter count over a bigger board makes critters farther apart and
-  // the puzzle *easier*, not harder. An earlier version ramped critter count 1..N at every grid
-  // size, which meant every new size reset straight back to trivial (1 critter on the biggest
-  // board yet) right after the hardest point of the previous size - an oscillating, not
-  // escalating, curve. Now each size only uses its top 3 critter counts (N-2, N-1, N, clamped at
-  // 1), so the density floor climbs every size (33% -> 50% -> 60% -> 67% -> 71% -> 75%) instead
-  // of crashing back down. 3+3+3+3+3+3 = 18 levels, 2 wins each, 36 wins to clear the ladder
-  // once - same 18-level shape/content as before, just faster pacing per level.
-  const TIER_WINS_REQUIRED = 2;
+  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23; win-count trimmed
+  // 2026-09-21 first to 2 wins/level, then to 1 win/level per feedback that players shouldn't
+  // have to count sub-levels at all - every single win should read as "a level," full stop):
+  // critter count alone drives solving difficulty (masking/ties), not board size - spreading a
+  // low critter count over a bigger board makes critters farther apart and the puzzle *easier*,
+  // not harder. An earlier version ramped critter count 1..N at every grid size, which meant
+  // every new size reset straight back to trivial (1 critter on the biggest board yet) right
+  // after the hardest point of the previous size - an oscillating, not escalating, curve. Now
+  // each size only uses its top 3 critter counts (N-2, N-1, N, clamped at 1), so the density
+  // floor climbs every size (33% -> 50% -> 60% -> 67% -> 71% -> 75%) instead of crashing back
+  // down. 3+3+3+3+3+3 = 18 levels, 1 win each, 18 wins to clear the ladder once - same 18-level
+  // shape/content as before, now with every win advancing the level counter by exactly one.
+  const TIER_WINS_REQUIRED = 1;
   const TIERS = [];
   for (let n = MIN_GRID; n <= MAX_GRID; n++) {
     const minCount = Math.max(1, n - 2);
