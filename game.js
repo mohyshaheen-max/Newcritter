@@ -33,6 +33,7 @@
     continueDeclineBtn: document.getElementById('continueDeclineBtn'),
     toast: document.getElementById('toast'),
     level: document.getElementById('levelVal'),
+    streak: document.getElementById('streakVal'),
   };
 
   let toastTimer = null;
@@ -44,21 +45,102 @@
   }
 
   // 0-indexed; grid size = MIN_GRID + level, capped at MAX_GRID. One win advances it (no
-  // demotion on a loss); survives round resets same as coins, since it's overall progress.
+  // demotion on a loss); persisted, since it's overall progress.
   let level = 0;
   function currentGridSize() { return Math.min(MIN_GRID + level, MAX_GRID); }
 
-  // Bumped up for easier testing of the power-ups; real coin economy (earned from stars, persisted) lands in build-order step 4.
-  let coins = 10;
+  const STARTING_COINS = 5; // a small welcome balance for a brand new player; returning players load their real saved total
+  let coins = STARTING_COINS;
 
-  // Survives round resets (that's the point of a streak shield) - there's no real streak
-  // counter to protect yet (that's build-order step 4), so this just tracks arm/consume state.
+  // Persisted so it survives round resets (that's the point of a streak shield) and reloads.
   let streakShieldArmed = false;
 
   // A separate power-up from Streak Shield: insurance on exactly your very next tap (consumed
-  // by it regardless of outcome), not the streak. Survives round resets since it's a banked,
-  // paid-for protection that hasn't been spent on a tap yet.
+  // by it regardless of outcome), not the streak. Persisted since it's a banked, paid-for
+  // protection that hasn't been spent on a tap yet.
   let lifeWardArmed = false;
+
+  // Daily streak: only the first completed round of each calendar day decides that day's
+  // outcome (later rounds that same day don't change it). A win, or a loss where Streak
+  // Shield absorbs it, extends the streak (continuing it if yesterday was the last extended
+  // day, otherwise starting fresh at 1). An unshielded loss (declined Continue) breaks it to 0.
+  // This is a product decision (2026-09-21) resolving SPEC.md's open question on streak
+  // definition, informed by Streak Shield's own description of protecting "one round-reset or
+  // one missed day" - implying a lost round is a distinct hazard from simply missing a day.
+  let streak = 0;
+  let lastExtendDate = null; // last calendar date (YYYY-MM-DD) the streak was successfully extended
+  let lastDecidedDate = null; // last calendar date whose outcome (extend or break) has already been decided
+
+  const SAVE_KEY = 'compassCritters.save.v1';
+
+  function todayDateString() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function dateStringOneDayBefore(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function loadSave() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null; // private browsing, storage disabled, or corrupt data - just start fresh
+    }
+  }
+
+  function persistSave() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        version: 1, coins, streak, lastExtendDate, lastDecidedDate, level,
+        streakShieldArmed, lifeWardArmed,
+      }));
+    } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
+  }
+
+  (function loadFromSave() {
+    const saved = loadSave();
+    if (!saved) return;
+    if (typeof saved.coins === 'number') coins = saved.coins;
+    if (typeof saved.streak === 'number') streak = saved.streak;
+    if (typeof saved.lastExtendDate === 'string') lastExtendDate = saved.lastExtendDate;
+    if (typeof saved.lastDecidedDate === 'string') lastDecidedDate = saved.lastDecidedDate;
+    if (typeof saved.level === 'number') level = saved.level;
+    streakShieldArmed = !!saved.streakShieldArmed;
+    lifeWardArmed = !!saved.lifeWardArmed;
+  })();
+
+  // Lives kept only (product decision 2026-09-21, resolving SPEC.md's star-threshold open
+  // question) - power-up usage doesn't affect stars, just how many lives you finished with.
+  function starsForRound() {
+    if (state.lives >= 3) return 3;
+    if (state.lives === 2) return 2;
+    return 1; // any win is at least 1 star, even at 0-1 lives kept
+  }
+
+  function recordRoundResult(won) {
+    const today = todayDateString();
+    if (lastDecidedDate === today) return; // a later round today doesn't change today's outcome
+    lastDecidedDate = today;
+
+    const shieldSavedThis = !won && streakShieldArmed;
+    if (shieldSavedThis) {
+      streakShieldArmed = false;
+      showToast('🛡️ Shield used — your streak is protected.');
+    }
+
+    if (won || shieldSavedThis) {
+      streak = (lastExtendDate && dateStringOneDayBefore(today) === lastExtendDate) ? streak + 1 : 1;
+      lastExtendDate = today;
+    } else {
+      streak = 0;
+    }
+    persistSave();
+  }
 
   let state = null;
 
@@ -483,13 +565,20 @@
 
   function winRound() {
     state.roundOver = true;
+    const stars = starsForRound();
+    coins += stars; // 1 coin per star, per spec's proposal
+    recordRoundResult(true);
     const wasAtMax = state.n >= MAX_GRID;
     if (!wasAtMax) level++;
     const nextSize = currentGridSize();
+    persistSave();
+    updateStats();
     setTimeout(() => {
-      el.winStats.textContent = wasAtMax
-        ? `Lives kept: ${state.lives}/${MAX_LIVES} — you've maxed out at ${MAX_GRID}×${MAX_GRID}!`
-        : `Lives kept: ${state.lives}/${MAX_LIVES} — Level ${level + 1} unlocked (${nextSize}×${nextSize})!`;
+      const starText = '⭐'.repeat(stars);
+      const sizeText = wasAtMax
+        ? `You've maxed out at ${MAX_GRID}×${MAX_GRID}!`
+        : `Level ${level + 1} unlocked (${nextSize}×${nextSize})!`;
+      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${sizeText}`;
       el.winOverlay.classList.remove('hidden');
     }, 300);
   }
@@ -598,6 +687,9 @@
 
     el.shieldBtn.disabled = state.roundOver || coins < 1 || streakShieldArmed;
     el.shieldBtn.textContent = streakShieldArmed ? 'Shield: armed 🛡️' : 'Shield · 1 🪙';
+
+    el.streak.textContent = streak;
+    persistSave();
   }
 
   function render() {
@@ -654,10 +746,7 @@
 
   el.continueDeclineBtn.addEventListener('click', () => {
     el.continueOverlay.classList.add('hidden');
-    if (streakShieldArmed) {
-      streakShieldArmed = false; // shield spent protecting the streak through this reset
-      showToast('🛡️ Shield used — your streak is protected.');
-    }
+    recordRoundResult(false);
     startRound();
   });
 

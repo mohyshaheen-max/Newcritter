@@ -58,10 +58,11 @@ The free first-tap safety guarantee (see Board & generation rules) sits outside 
 
 ## Scoring, streaks, and leaderboard rewards
 
-- **Stars**: based on lives kept and power-ups left unused, not move count (move count barely varies now that winning requires revealing almost every tile) — e.g. 3 lives kept and no power-ups used = 3★. Exact thresholds still to be tuned.
-- **Coins from stars**: proposed 1 coin per star (3★ = 3 coins) — not yet confirmed.
-- **Daily streak**: proposed to increment once per calendar day on completing a round, win or loss both counting, so it can't be gamed by opening and closing the app — not yet confirmed.
+- **Stars**: decided 2026-09-21 — lives kept only, not power-ups used (simpler than spec's original framing): 3 lives kept = 3★, 2 lives kept = 2★, 0-1 lives kept = 1★ (any win is at least 1★).
+- **Coins from stars**: decided 2026-09-21 — 1 coin per star, as originally proposed (3★ win = 3 coins).
+- **Daily streak**: decided 2026-09-21 — only the first completed round of each calendar day decides that day's outcome. A win, or a loss Streak Shield absorbs, extends the streak (continuing it if yesterday was the last extended day, otherwise starting fresh at 1). An unshielded loss (declined Continue) breaks it to 0. This reconciles the "win or loss both counting" proposal with Streak Shield's own description of protecting "one round-reset or one missed day" - a lost round is treated as a distinct hazard from simply missing a day, not something that silently keeps the streak alive.
 - **Leaderboard**: proposed weekly cumulative score against friends and globally, resetting each week; top ranks get a badge/title and a small coin bonus — not yet confirmed.
+- **Persistence**: coins, streak, level progress, and armed power-up state (Streak Shield, Ward) are saved to localStorage on this device. New players start with 5 coins. Cross-device sync is not implemented - see open questions.
 
 ## Monetization touchpoints
 
@@ -74,9 +75,10 @@ The free first-tap safety guarantee (see Board & generation rules) sits outside 
 ## Open questions still needing a decision
 
 - [x] Levels-per-grid-size pacing — decided 2026-09-20: 1 win per size, no demotion on a loss
-- [ ] Exact star-rating thresholds (lives kept + power-ups unused → 1★/2★/3★)
-- [ ] Stars → coins conversion rate
-- [ ] Daily streak definition — any completed round, or does it require a win
+- [x] Exact star-rating thresholds — decided 2026-09-21: lives kept only (3/2/0-1 lives → 3★/2★/1★)
+- [x] Stars → coins conversion rate — decided 2026-09-21: 1 coin per star
+- [x] Daily streak definition — decided 2026-09-21: see Scoring section; first round of the day decides it, an unshielded loss breaks it
 - [ ] Leaderboard scoring metric and reward structure
 - [x] Pulse's exact unlock grid size — decided 2026-09-20: 5×5 and above
 - [ ] Naming and visual direction (deferred, not urgent)
+- [ ] Cross-device streak/coin sync — currently localStorage-only, single device

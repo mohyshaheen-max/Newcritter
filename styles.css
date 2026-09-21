@@ -251,6 +251,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   margin: 0 0 6px;
 }
 .modal p { color: var(--fg-soft); font-size: 0.9rem; margin: 4px 0 0; }
+#winStats { white-space: pre-line; line-height: 1.6; }
 .modal .modal-actions {
   display: flex;
   flex-direction: column;
