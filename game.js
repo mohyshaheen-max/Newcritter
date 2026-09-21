@@ -3,18 +3,18 @@
   const MAX_GRID = 8; // spec's brute-force-feasible ceiling; past this, generation needs a constraint solver instead
   const MAX_LIVES = 3;
 
-  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23): critter count alone
-  // drives solving difficulty (masking/ties), not board size - spreading a low critter count
-  // over a bigger board makes critters farther apart and the puzzle *easier*, not harder. An
-  // earlier version ramped critter count 1..N at every grid size, which meant every new size
-  // reset straight back to trivial (1 critter on the biggest board yet) right after the hardest
-  // point of the previous size - an oscillating, not escalating, curve. Now each size only uses
-  // its top 3 critter counts (N-2, N-1, N, clamped at 1), so the density floor climbs every
-  // size (33% -> 50% -> 60% -> 67% -> 71% -> 75%) instead of crashing back down. 3+3+3+3+3+3 =
-  // 18 tiers, 3 wins each, 54 wins to clear the ladder once. Fewer tiers than the max-content
-  // version, on purpose - a smooth curve matters more than raw tier count, and there are other
-  // ways to extend play length later without reintroducing the reset.
-  const TIER_WINS_REQUIRED = 3;
+  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23, win-count trimmed
+  // 2026-09-21 per feedback that 9 wins per grid size - 3 sub-levels x 3 wins - felt like too
+  // much of a wait): critter count alone drives solving difficulty (masking/ties), not board
+  // size - spreading a low critter count over a bigger board makes critters farther apart and
+  // the puzzle *easier*, not harder. An earlier version ramped critter count 1..N at every grid
+  // size, which meant every new size reset straight back to trivial (1 critter on the biggest
+  // board yet) right after the hardest point of the previous size - an oscillating, not
+  // escalating, curve. Now each size only uses its top 3 critter counts (N-2, N-1, N, clamped at
+  // 1), so the density floor climbs every size (33% -> 50% -> 60% -> 67% -> 71% -> 75%) instead
+  // of crashing back down. 3+3+3+3+3+3 = 18 levels, 2 wins each, 36 wins to clear the ladder
+  // once - same 18-level shape/content as before, just faster pacing per level.
+  const TIER_WINS_REQUIRED = 2;
   const TIERS = [];
   for (let n = MIN_GRID; n <= MAX_GRID; n++) {
     const minCount = Math.max(1, n - 2);
@@ -768,7 +768,7 @@
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
-    el.level.textContent = `Tier ${tierIndex + 1}/${TIERS.length} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
+    el.level.textContent = `Level ${tierIndex + 1}/${TIERS.length} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
     updateStats();
     render();
   }
@@ -1072,10 +1072,10 @@
       if (wasAtLastTier) {
         progressText = `You've maxed out the ladder — ${MAX_GRID}×${MAX_GRID} with ${tier.critterCount} critters!`;
       } else if (tierAdvanced) {
-        progressText = `Tier ${tierIndex + 1}/${TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
+        progressText = `Level ${tierIndex + 1}/${TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
       } else {
         const winsNeeded = TIER_WINS_REQUIRED - tierWins;
-        progressText = `${winsNeeded} more win${winsNeeded === 1 ? '' : 's'} at this tier to advance.`;
+        progressText = `${winsNeeded} more win${winsNeeded === 1 ? '' : 's'} at this level to advance.`;
       }
       el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
       el.winOverlay.classList.remove('hidden');
