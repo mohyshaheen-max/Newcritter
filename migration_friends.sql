@@ -2,7 +2,10 @@
 -- the original leaderboard schema). Run this once in the D1 Console. schema.sql already has
 -- these baked into the base CREATE TABLE statements for any future fresh install, so this file
 -- is only needed against the existing database.
-ALTER TABLE players ADD COLUMN friend_code TEXT UNIQUE;
+-- SQLite's ALTER TABLE ADD COLUMN can't carry a UNIQUE constraint directly (rejected outright,
+-- nothing partial happens) - add the column plain, then enforce uniqueness with an index instead.
+ALTER TABLE players ADD COLUMN friend_code TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_players_friend_code ON players(friend_code);
 
 CREATE TABLE IF NOT EXISTS friendships (
   player_id TEXT NOT NULL,
