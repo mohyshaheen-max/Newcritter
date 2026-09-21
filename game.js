@@ -100,6 +100,14 @@
     addFriendBtn: document.getElementById('addFriendBtn'),
     friendsList: document.getElementById('friendsList'),
     friendsCloseBtn: document.getElementById('friendsCloseBtn'),
+    dailyQuestsBtn: document.getElementById('dailyQuestsBtn'),
+    dailyQuestsOverlay: document.getElementById('dailyQuestsOverlay'),
+    dailyQuestsList: document.getElementById('dailyQuestsList'),
+    dailyQuestsCloseBtn: document.getElementById('dailyQuestsCloseBtn'),
+    milestoneOverlay: document.getElementById('milestoneOverlay'),
+    milestoneTitle: document.getElementById('milestoneTitle'),
+    milestoneReward: document.getElementById('milestoneReward'),
+    milestoneCloseBtn: document.getElementById('milestoneCloseBtn'),
   };
 
   let toastTimer = null;
@@ -150,6 +158,10 @@
   let lastExtendDate = null; // last calendar date (YYYY-MM-DD) the streak was successfully extended
   let lastDecidedDate = null; // last calendar date whose outcome (extend or break) has already been decided
 
+  // Lifetime win count, independent of the level ladder - drives the win-count milestone track
+  // (see below), which keeps paying out small bonuses even after the ladder itself is cleared.
+  let totalWins = 0;
+
   const SAVE_KEY = 'compassCritters.save.v1';
 
   // Testing-only: lets QA advance the simulated "today" without touching the system clock, to
@@ -190,7 +202,7 @@
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         version: 3, coins, streak, lastExtendDate, lastDecidedDate,
         tierGridSize: tier.gridSize, tierCritterCount: tier.critterCount, tierWins,
-        streakShieldArmed, lifeWardArmed,
+        streakShieldArmed, lifeWardArmed, totalWins,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
   }
@@ -202,6 +214,7 @@
     if (typeof saved.streak === 'number') streak = saved.streak;
     if (typeof saved.lastExtendDate === 'string') lastExtendDate = saved.lastExtendDate;
     if (typeof saved.lastDecidedDate === 'string') lastDecidedDate = saved.lastDecidedDate;
+    if (typeof saved.totalWins === 'number') totalWins = saved.totalWins;
     if (saved.version === 3 && typeof saved.tierGridSize === 'number') {
       let idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize && t.critterCount === saved.tierCritterCount);
       if (idx < 0) idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize); // that exact count no longer exists at this size - land on the size's first tier instead
@@ -843,6 +856,7 @@
   // without also having to tap every remaining tile one by one - flagging is still optional
   // per spec, this is just a faster path to the same win condition on bigger boards.
   function autoCompleteRound() {
+    let revealedThisCall = 0;
     for (let r = 0; r < state.n; r++) {
       for (let c = 0; c < state.n; c++) {
         const cell = state.cells[r][c];
@@ -853,9 +867,11 @@
         } else {
           cell.status = 'revealed';
           state.revealed++;
+          revealedThisCall++;
         }
       }
     }
+    if (revealedThisCall > 0) trackDailyQuestProgress('tiles', revealedThisCall);
     updateStats();
     render();
     winRound();
@@ -906,6 +922,7 @@
     } else {
       cell.status = 'revealed';
       state.revealed++;
+      trackDailyQuestProgress('tiles', 1);
       if (wardCoveredThisTap) showToast('🛡️ Ward used — that tap was safe anyway.');
       updateStats();
       render();
@@ -927,6 +944,7 @@
     const [r, c] = hidden[Math.floor(Math.random() * hidden.length)];
     coins--;
     state.cells[r][c] = { status: 'critter', flagged: false };
+    trackDailyQuestProgress('powerup', 1);
     updateStats();
     render();
     if (allCrittersFlaggedCorrectly()) autoCompleteRound();
@@ -940,6 +958,7 @@
     state.lives = last.lives;
     state.revealed = last.revealed;
     if (last.wardConsumed) lifeWardArmed = true; // undoing the tap it covered gives the ward back too
+    trackDailyQuestProgress('powerup', 1);
     updateStats();
     render();
   }
@@ -948,6 +967,7 @@
     if (streakShieldArmed || coins < 1) return;
     coins--;
     streakShieldArmed = true;
+    trackDailyQuestProgress('powerup', 1);
     updateStats();
   }
 
@@ -955,6 +975,7 @@
     if (lifeWardArmed || coins < WARD_COST) return;
     coins -= WARD_COST;
     lifeWardArmed = true;
+    trackDailyQuestProgress('powerup', 1);
     updateStats();
   }
 
@@ -986,6 +1007,7 @@
     const count = countCrittersInArea(state.perm, state.n, r, c);
     coins -= PULSE_COST;
     highlightArea(r, c, count);
+    trackDailyQuestProgress('powerup', 1);
     showToast(`Pulse: ${count} critter${count === 1 ? '' : 's'} in that 3×3 area`);
     updateStats();
   }
@@ -1031,6 +1053,7 @@
     coins -= DECODE_COST;
     const wedges = nearestWedges(state.perm, state.n, r, c);
     cell.decodedWedges = wedges;
+    trackDailyQuestProgress('powerup', 1);
     showToast(`Decoded: tied between ${wedges.map(i => ARROWS[i]).join(' and ')}`);
     updateStats();
     render();
@@ -1062,6 +1085,14 @@
     coins += stars; // 1 coin per star, per spec's proposal
     recordRoundResult(true);
     submitScore(stars);
+
+    totalWins++;
+    trackDailyQuestProgress('wins', 1);
+    const milestone = milestoneForWinCount(totalWins);
+    if (milestone) {
+      coins += milestone.reward;
+      pendingMilestone = milestone;
+    }
 
     const wasAtLastTier = tierIndex >= TIERS.length - 1;
     tierWins++;
@@ -1234,20 +1265,32 @@
     startRound();
   });
 
-  el.winPlayAgainBtn.addEventListener('click', () => {
-    el.winOverlay.classList.add('hidden');
+  // Chain: win overlay -> [power-ups intro, if pending] -> [milestone, if pending] -> next
+  // round. Each step's close handler picks up wherever the chain left off rather than always
+  // jumping straight to startRound(), so the (rare) case of both being pending the same win
+  // still shows both instead of dropping one.
+  function afterWinOverlayChain() {
     if (pendingPowerupsIntro) {
       pendingPowerupsIntro = false;
       markPowerupsIntroSeen();
       el.powerupsIntroOverlay.classList.remove('hidden');
-      return; // startRound() happens once they dismiss the intro instead, see below
+      return;
+    }
+    if (pendingMilestone) {
+      showMilestoneOverlay();
+      return;
     }
     startRound();
+  }
+
+  el.winPlayAgainBtn.addEventListener('click', () => {
+    el.winOverlay.classList.add('hidden');
+    afterWinOverlayChain();
   });
 
   el.powerupsIntroCloseBtn.addEventListener('click', () => {
     el.powerupsIntroOverlay.classList.add('hidden');
-    startRound();
+    afterWinOverlayChain();
   });
 
   el.continueCoinBtn.addEventListener('click', () => {
@@ -1295,10 +1338,11 @@
   });
 
   // Testing-only: wipes every localStorage key this game writes (save blob, tutorial/power-ups
-  // "seen" flags, leaderboard playerId + nickname) and reloads, so a device that's already made
-  // real progress can be put back into a true first-launch state on demand - the only other way
-  // to see the tutorial or power-ups intro again is clearing site data by hand. Same removal
-  // note as the rest of the debug tooling - strip before the App Store build.
+  // "seen" flags, leaderboard playerId + nickname, daily quest progress) and reloads, so a
+  // device that's already made real progress can be put back into a true first-launch state on
+  // demand - the only other way to see the tutorial or power-ups intro again is clearing site
+  // data by hand. Same removal note as the rest of the debug tooling - strip before the App
+  // Store build.
   el.debugResetBtn.addEventListener('click', () => {
     if (!window.confirm('Reset ALL saved progress (coins, streak, tier, tutorial, leaderboard identity) and reload as a brand-new player?')) return;
     try {
@@ -1307,9 +1351,165 @@
       localStorage.removeItem(POWERUPS_INTRO_SEEN_KEY);
       localStorage.removeItem(PLAYER_ID_KEY);
       localStorage.removeItem(NICKNAME_KEY);
+      localStorage.removeItem(DAILY_QUESTS_KEY);
     } catch (err) { /* storage unavailable - nothing to clear */ }
     location.reload();
   });
+
+  // --- Retention: win-count milestones + daily quests (2026-09-21 product decision, informed
+  // by how other mobile puzzle games - Zoodoku's first-win/milestone badges, the generic
+  // daily-quest claim screens most of the genre uses - keep players coming back). Both are
+  // purely client-side/per-device: milestones key off the lifetime totalWins counter above,
+  // daily quests reset on the same calendar-day boundary the streak already uses
+  // (todayDateString(), so it also respects the debug day-offset for testing). Neither touches
+  // the leaderboard/friends server state - these are local habit loops, not competitive ones.
+  // Deliberately no ad-watching quests yet, unlike the reference screenshots - there's no real
+  // ad SDK wired in (see Monetization touchpoints), only objectives the game already tracks.
+
+  // A first-win celebration, then a small bonus every 5th win after that, forever - keeps
+  // paying out even once the 36-level ladder itself is cleared (see the Difficulty progression
+  // note on endless replay needing its own incentives).
+  function milestoneForWinCount(n) {
+    if (n === 1) return { title: 'First Win!', reward: 3 };
+    if (n % 5 === 0) return { title: `${n} Wins!`, reward: 5 };
+    return null;
+  }
+
+  // Set by winRound() when a milestone is hit, consumed by the win-overlay dismissal chain
+  // (Play Again -> [power-ups intro if pending] -> [milestone if pending] -> next round) -
+  // same pattern as pendingPowerupsIntro above.
+  let pendingMilestone = null;
+
+  function showMilestoneOverlay() {
+    el.milestoneTitle.textContent = pendingMilestone.title;
+    el.milestoneReward.textContent = `+${pendingMilestone.reward} 🪙`;
+    el.milestoneOverlay.classList.remove('hidden');
+  }
+
+  el.milestoneCloseBtn.addEventListener('click', () => {
+    el.milestoneOverlay.classList.add('hidden');
+    pendingMilestone = null;
+    startRound();
+  });
+
+  const DAILY_QUESTS_KEY = 'compassCritters.dailyQuests.v1';
+  const DAILY_QUEST_DEFS = [
+    { id: 'wins', label: 'Win 2 rounds', target: 2, reward: 2 },
+    { id: 'tiles', label: 'Reveal 30 tiles', target: 30, reward: 2 },
+    { id: 'powerup', label: 'Use a power-up', target: 1, reward: 2 },
+  ];
+  const DAILY_QUEST_BONUS = 3;
+
+  let dailyQuests = { date: null, progress: { wins: 0, tiles: 0, powerup: 0 }, claimed: { wins: false, tiles: false, powerup: false, bonus: false } };
+
+  function persistDailyQuests() {
+    try { localStorage.setItem(DAILY_QUESTS_KEY, JSON.stringify(dailyQuests)); } catch (err) { /* storage unavailable - progress just won't survive a reload */ }
+  }
+
+  // Resets the whole quest set the moment todayDateString() rolls over - called defensively
+  // before every read/write below rather than just once at load, since a session can stay open
+  // across a real midnight (or a debug day-advance) without a reload in between.
+  function ensureDailyQuestsForToday() {
+    const today = todayDateString();
+    if (dailyQuests.date === today) return;
+    dailyQuests = { date: today, progress: { wins: 0, tiles: 0, powerup: 0 }, claimed: { wins: false, tiles: false, powerup: false, bonus: false } };
+    persistDailyQuests();
+  }
+
+  (function loadDailyQuests() {
+    try {
+      const raw = localStorage.getItem(DAILY_QUESTS_KEY);
+      const saved = raw ? JSON.parse(raw) : null;
+      if (saved && saved.date && saved.progress && saved.claimed) dailyQuests = saved;
+    } catch (err) { /* private browsing, storage disabled, or corrupt data - just start fresh */ }
+    ensureDailyQuestsForToday();
+  })();
+
+  function allDailyQuestsClaimed() {
+    return DAILY_QUEST_DEFS.every(d => dailyQuests.claimed[d.id]);
+  }
+
+  function updateDailyQuestsBadge() {
+    ensureDailyQuestsForToday();
+    const claimableCount = DAILY_QUEST_DEFS.filter(d => !dailyQuests.claimed[d.id] && dailyQuests.progress[d.id] >= d.target).length
+      + (allDailyQuestsClaimed() && !dailyQuests.claimed.bonus ? 1 : 0);
+    el.dailyQuestsBtn.textContent = claimableCount > 0 ? `📅 Daily Quests (${claimableCount})` : '📅 Daily Quests';
+  }
+
+  // Tracks progress toward whichever quest `id` corresponds to; stops accumulating past a
+  // quest's target (and once claimed) since nothing reads the excess.
+  function trackDailyQuestProgress(id, amount) {
+    ensureDailyQuestsForToday();
+    const def = DAILY_QUEST_DEFS.find(d => d.id === id);
+    if (!def || dailyQuests.claimed[id]) return;
+    dailyQuests.progress[id] = Math.min(def.target, dailyQuests.progress[id] + amount);
+    persistDailyQuests();
+    updateDailyQuestsBadge();
+  }
+
+  function renderDailyQuests() {
+    ensureDailyQuestsForToday();
+    el.dailyQuestsList.innerHTML = DAILY_QUEST_DEFS.map((d) => {
+      const progress = dailyQuests.progress[d.id];
+      const claimed = dailyQuests.claimed[d.id];
+      const complete = progress >= d.target;
+      const btnLabel = claimed ? 'Claimed' : (complete ? `Claim +${d.reward} 🪙` : `${progress}/${d.target}`);
+      return `
+        <div class="quest-row">
+          <div class="quest-info">
+            <p class="quest-label">${d.label}</p>
+            <p class="quest-progress">${progress}/${d.target}</p>
+          </div>
+          <button class="btn-secondary quest-claim-btn" data-quest-id="${d.id}" ${claimed || !complete ? 'disabled' : ''}>${btnLabel}</button>
+        </div>`;
+    }).join('') + `
+      <div class="quest-row quest-bonus-row">
+        <div class="quest-info">
+          <p class="quest-label">🎁 Complete all 3</p>
+          <p class="quest-progress">Bonus</p>
+        </div>
+        <button class="btn-secondary quest-claim-btn" id="dailyQuestBonusBtn" ${dailyQuests.claimed.bonus || !allDailyQuestsClaimed() ? 'disabled' : ''}>${dailyQuests.claimed.bonus ? 'Claimed' : `+${DAILY_QUEST_BONUS} 🪙`}</button>
+      </div>`;
+
+    el.dailyQuestsList.querySelectorAll('.quest-claim-btn[data-quest-id]').forEach((btn) => {
+      btn.addEventListener('click', () => claimDailyQuest(btn.dataset.questId));
+    });
+    const bonusBtn = document.getElementById('dailyQuestBonusBtn');
+    if (bonusBtn) bonusBtn.addEventListener('click', claimDailyQuestBonus);
+  }
+
+  function claimDailyQuest(id) {
+    const def = DAILY_QUEST_DEFS.find(d => d.id === id);
+    if (!def || dailyQuests.claimed[id] || dailyQuests.progress[id] < def.target) return;
+    dailyQuests.claimed[id] = true;
+    coins += def.reward;
+    persistSave();
+    persistDailyQuests();
+    updateStats();
+    updateDailyQuestsBadge();
+    showToast(`✅ Quest complete: +${def.reward} 🪙`);
+    renderDailyQuests();
+  }
+
+  function claimDailyQuestBonus() {
+    if (dailyQuests.claimed.bonus || !allDailyQuestsClaimed()) return;
+    dailyQuests.claimed.bonus = true;
+    coins += DAILY_QUEST_BONUS;
+    persistSave();
+    persistDailyQuests();
+    updateStats();
+    updateDailyQuestsBadge();
+    showToast(`🎁 All quests complete: +${DAILY_QUEST_BONUS} 🪙`);
+    renderDailyQuests();
+  }
+
+  el.dailyQuestsBtn.addEventListener('click', () => {
+    renderDailyQuests();
+    el.dailyQuestsOverlay.classList.remove('hidden');
+  });
+  el.dailyQuestsCloseBtn.addEventListener('click', () => el.dailyQuestsOverlay.classList.add('hidden'));
+
+  updateDailyQuestsBadge();
 
   // Testing-only: exposes internal state so an automated test harness can drive full
   // playthroughs (tapping only known-safe tiles) without visually solving puzzles. Same
@@ -1317,7 +1517,7 @@
   window.__debugGetState = () => ({
     state, tierIndex, tierWins, TIERS, streak, coins,
     streakShieldArmed, lifeWardArmed, lastExtendDate, lastDecidedDate,
-    tutorialActive, tutorialStep,
+    tutorialActive, tutorialStep, totalWins, dailyQuests, pendingMilestone,
   });
 
   // --- Onboarding tutorial (2026-09-21, expanded same day per feedback the first cut was too

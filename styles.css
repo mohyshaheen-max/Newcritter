@@ -379,6 +379,24 @@ button:disabled { opacity: 0.5; cursor: default; }
   font-size: 0.78rem;
 }
 
+.quest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.quest-row:last-child { border-bottom: none; }
+.quest-row.quest-bonus-row { background: rgba(184, 121, 42, 0.08); }
+.quest-info { min-width: 0; }
+.quest-label { margin: 0; font-size: 0.85rem; color: var(--fg); font-weight: 600; }
+.quest-progress { margin: 2px 0 0; font-size: 0.75rem; color: var(--fg-soft); }
+.quest-claim-btn { flex: none; padding: 7px 12px; font-size: 0.78rem; }
+
+#milestoneTitle { color: var(--accent-strong); }
+#milestoneReward { font-size: 1.3rem; font-weight: 700; color: var(--fg); margin-top: 10px; }
+
 .leaderboard-list {
   margin-top: 14px;
   max-height: 320px;

@@ -63,6 +63,7 @@
     <button class="btn-primary" id="newRoundBtn">New round</button>
     <button class="btn-secondary" id="leaderboardBtn">🏆 Leaderboard</button>
     <button class="btn-secondary" id="friendsBtn">👥 Friends</button>
+    <button class="btn-secondary" id="dailyQuestsBtn">📅 Daily Quests</button>
     <button class="btn-secondary" id="howToPlayBtn">❓ How to play</button>
   </div>
 
@@ -123,6 +124,27 @@
       <div class="leaderboard-list" id="friendsList"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="friendsCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="dailyQuestsOverlay">
+    <div class="modal modal-wide">
+      <h2>Daily Quests</h2>
+      <p>Resets every day. Complete all three for a bonus.</p>
+      <div class="leaderboard-list" id="dailyQuestsList"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="dailyQuestsCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="milestoneOverlay">
+    <div class="modal">
+      <h2 id="milestoneTitle">Milestone!</h2>
+      <p id="milestoneReward"></p>
+      <div class="modal-actions">
+        <button class="btn-primary" id="milestoneCloseBtn">Nice!</button>
       </div>
     </div>
   </div>
