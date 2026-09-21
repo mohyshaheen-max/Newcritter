@@ -54,6 +54,7 @@
     streak: document.getElementById('streakVal'),
     debugAdvanceDayBtn: document.getElementById('debugAdvanceDayBtn'),
     debugDateVal: document.getElementById('debugDateVal'),
+    debugResetBtn: document.getElementById('debugResetBtn'),
     leaderboardBtn: document.getElementById('leaderboardBtn'),
     leaderboardOverlay: document.getElementById('leaderboardOverlay'),
     leaderboardWeekLabel: document.getElementById('leaderboardWeekLabel'),
@@ -1130,6 +1131,23 @@
     debugDayOffset++;
     updateDebugPanel();
     showToast(`Debug: simulated date is now ${todayDateString()} — win or lose a round to see the streak react`);
+  });
+
+  // Testing-only: wipes every localStorage key this game writes (save blob, tutorial/power-ups
+  // "seen" flags, leaderboard playerId + nickname) and reloads, so a device that's already made
+  // real progress can be put back into a true first-launch state on demand - the only other way
+  // to see the tutorial or power-ups intro again is clearing site data by hand. Same removal
+  // note as the rest of the debug tooling - strip before the App Store build.
+  el.debugResetBtn.addEventListener('click', () => {
+    if (!window.confirm('Reset ALL saved progress (coins, streak, tier, tutorial, leaderboard identity) and reload as a brand-new player?')) return;
+    try {
+      localStorage.removeItem(SAVE_KEY);
+      localStorage.removeItem(TUTORIAL_SEEN_KEY);
+      localStorage.removeItem(POWERUPS_INTRO_SEEN_KEY);
+      localStorage.removeItem(PLAYER_ID_KEY);
+      localStorage.removeItem(NICKNAME_KEY);
+    } catch (err) { /* storage unavailable - nothing to clear */ }
+    location.reload();
   });
 
   // Testing-only: exposes internal state so an automated test harness can drive full
