@@ -108,6 +108,8 @@
     milestoneTitle: document.getElementById('milestoneTitle'),
     milestoneReward: document.getElementById('milestoneReward'),
     milestoneCloseBtn: document.getElementById('milestoneCloseBtn'),
+    endlessModeIntroOverlay: document.getElementById('endlessModeIntroOverlay'),
+    endlessModeIntroCloseBtn: document.getElementById('endlessModeIntroCloseBtn'),
   };
 
   let toastTimer = null;
@@ -123,6 +125,9 @@
   let tierIndex = 0;
   let tierWins = 0;
   function currentTier() { return TIERS[Math.min(tierIndex, TIERS.length - 1)]; }
+  // True once the ladder's last difficulty step is reached - there's nothing left to advance
+  // to, so every subsequent round replays 8x8/8-critters as Endless Mode (see below).
+  function isEndlessMode() { return tierIndex >= TIERS.length - 1; }
 
   // Power-ups intro: shown once, the first time a player clears a tier (see winRound). Set when
   // that happens and consumed by the win overlay's "Play again" handler, which shows the intro
@@ -134,6 +139,23 @@
   }
   function markPowerupsIntroSeen() {
     try { localStorage.setItem(POWERUPS_INTRO_SEEN_KEY, '1'); } catch (err) { /* storage unavailable - will just show again next load */ }
+  }
+
+  // Endless Mode: once the 36-level ladder is fully cleared, the board stays at 8x8/8-critters
+  // forever - this just gives that state its own identity and a score to chase (a consecutive
+  // win streak) instead of silently repeating "maxed out" text every round. The intro overlay
+  // is shown once, the same "seen" flag pattern as the power-ups intro above. endlessStreak
+  // counts consecutive endless-mode wins and resets to 0 the moment a round there is lost
+  // (Continue declined); bestEndlessStreak is a persisted high-water mark that never decreases.
+  const ENDLESS_MODE_SEEN_KEY = 'compassCritters.endlessModeSeen.v1';
+  let pendingEndlessModeIntro = false;
+  let endlessStreak = 0;
+  let bestEndlessStreak = 0;
+  function shouldShowEndlessModeIntro() {
+    try { return !localStorage.getItem(ENDLESS_MODE_SEEN_KEY); } catch (err) { return false; }
+  }
+  function markEndlessModeIntroSeen() {
+    try { localStorage.setItem(ENDLESS_MODE_SEEN_KEY, '1'); } catch (err) { /* storage unavailable - will just show again next load */ }
   }
 
   const STARTING_COINS = 5; // a small welcome balance for a brand new player; returning players load their real saved total
@@ -202,7 +224,7 @@
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         version: 3, coins, streak, lastExtendDate, lastDecidedDate,
         tierGridSize: tier.gridSize, tierCritterCount: tier.critterCount, tierWins,
-        streakShieldArmed, lifeWardArmed, totalWins,
+        streakShieldArmed, lifeWardArmed, totalWins, endlessStreak, bestEndlessStreak,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
   }
@@ -215,6 +237,8 @@
     if (typeof saved.lastExtendDate === 'string') lastExtendDate = saved.lastExtendDate;
     if (typeof saved.lastDecidedDate === 'string') lastDecidedDate = saved.lastDecidedDate;
     if (typeof saved.totalWins === 'number') totalWins = saved.totalWins;
+    if (typeof saved.endlessStreak === 'number') endlessStreak = saved.endlessStreak;
+    if (typeof saved.bestEndlessStreak === 'number') bestEndlessStreak = saved.bestEndlessStreak;
     if (saved.version === 3 && typeof saved.tierGridSize === 'number') {
       let idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize && t.critterCount === saved.tierCritterCount);
       if (idx < 0) idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize); // that exact count no longer exists at this size - land on the size's first tier instead
@@ -797,7 +821,9 @@
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
-    el.level.textContent = `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
+    el.level.textContent = isEndlessMode()
+      ? `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters`
+      : `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
     updateStats();
     render();
   }
@@ -1094,7 +1120,11 @@
       pendingMilestone = milestone;
     }
 
-    const wasAtLastTier = tierIndex >= TIERS.length - 1;
+    const wasAtLastTier = isEndlessMode();
+    if (wasAtLastTier) {
+      endlessStreak++;
+      if (endlessStreak > bestEndlessStreak) bestEndlessStreak = endlessStreak;
+    }
     tierWins++;
     if (!wasAtLastTier && tierWins >= TIER_WINS_REQUIRED) {
       tierIndex++;
@@ -1106,6 +1136,9 @@
       // tier list's shape has already changed twice - checking the flag is robust to a third
       // change, checking `tierIndex === 1` wouldn't be.
       if (shouldShowPowerupsIntro()) pendingPowerupsIntro = true;
+      // Endless Mode intro: fires exactly once, the moment this win pushes tierIndex onto the
+      // ladder's last difficulty step for the first time ever.
+      if (isEndlessMode() && shouldShowEndlessModeIntro()) pendingEndlessModeIntro = true;
     }
     const tier = currentTier();
 
@@ -1115,9 +1148,10 @@
       const starText = '⭐'.repeat(stars);
       // Every win advances the displayed level number by exactly one, whether or not the
       // underlying difficulty step (tier) also changed this round - see the ladder comment up
-      // top for why the two are deliberately decoupled.
+      // top for why the two are deliberately decoupled. Once in Endless Mode, the level counter
+      // no longer applies - the win streak is the score there instead.
       const progressText = wasAtLastTier
-        ? `You've maxed out the ladder — ${MAX_GRID}×${MAX_GRID} with ${tier.critterCount} critters!`
+        ? `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak})`
         : `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
       el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
       el.winOverlay.classList.remove('hidden');
@@ -1265,15 +1299,21 @@
     startRound();
   });
 
-  // Chain: win overlay -> [power-ups intro, if pending] -> [milestone, if pending] -> next
-  // round. Each step's close handler picks up wherever the chain left off rather than always
-  // jumping straight to startRound(), so the (rare) case of both being pending the same win
-  // still shows both instead of dropping one.
+  // Chain: win overlay -> [power-ups intro, if pending] -> [Endless Mode intro, if pending] ->
+  // [milestone, if pending] -> next round. Each step's close handler picks up wherever the
+  // chain left off rather than always jumping straight to startRound(), so the (rare) case of
+  // more than one being pending the same win still shows all of them instead of dropping one.
   function afterWinOverlayChain() {
     if (pendingPowerupsIntro) {
       pendingPowerupsIntro = false;
       markPowerupsIntroSeen();
       el.powerupsIntroOverlay.classList.remove('hidden');
+      return;
+    }
+    if (pendingEndlessModeIntro) {
+      pendingEndlessModeIntro = false;
+      markEndlessModeIntroSeen();
+      el.endlessModeIntroOverlay.classList.remove('hidden');
       return;
     }
     if (pendingMilestone) {
@@ -1290,6 +1330,11 @@
 
   el.powerupsIntroCloseBtn.addEventListener('click', () => {
     el.powerupsIntroOverlay.classList.add('hidden');
+    afterWinOverlayChain();
+  });
+
+  el.endlessModeIntroCloseBtn.addEventListener('click', () => {
+    el.endlessModeIntroOverlay.classList.add('hidden');
     afterWinOverlayChain();
   });
 
@@ -1313,6 +1358,8 @@
   el.continueDeclineBtn.addEventListener('click', () => {
     el.continueOverlay.classList.add('hidden');
     recordRoundResult(false);
+    endlessStreak = 0; // a real loss - no-op outside Endless Mode, since it's already 0 there
+    persistSave();
     startRound();
   });
 
@@ -1352,6 +1399,7 @@
       localStorage.removeItem(PLAYER_ID_KEY);
       localStorage.removeItem(NICKNAME_KEY);
       localStorage.removeItem(DAILY_QUESTS_KEY);
+      localStorage.removeItem(ENDLESS_MODE_SEEN_KEY);
     } catch (err) { /* storage unavailable - nothing to clear */ }
     location.reload();
   });
@@ -1518,6 +1566,7 @@
     state, tierIndex, tierWins, TIERS, streak, coins,
     streakShieldArmed, lifeWardArmed, lastExtendDate, lastDecidedDate,
     tutorialActive, tutorialStep, totalWins, dailyQuests, pendingMilestone,
+    endlessStreak, bestEndlessStreak, pendingEndlessModeIntro, isEndlessMode: isEndlessMode(),
   });
 
   // --- Onboarding tutorial (2026-09-21, expanded same day per feedback the first cut was too
