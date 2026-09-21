@@ -32,13 +32,38 @@ No move budget and no rationed information: every clue is always available for t
 
 ## Difficulty progression
 
-- Decided 2026-09-22, revised 2026-09-23, win-count trimmed twice on 2026-09-21 (3→2→1 win per level, see below): within each grid size N (3×3 through 8×8), critter count ramps up, **1 win per level before advancing** (no demotion on a loss - a loss just retries the same level). Every single win therefore advances the level counter by exactly one - there is no sub-level grinding left for a player to notice or count. Displayed to the player as "Level" (e.g. "Level 1/18"); internally still called a tier in code/variable names.
+- Decided 2026-09-22, revised 2026-09-23; win-count settled 2026-09-21 after trying 3, then 2, then briefly 1 wins-per-difficulty-step before landing on **2** (see below for why). Two distinct concepts, deliberately not the same number:
+  - **Difficulty step** (18 total, internal - `TIERS` in code): a specific `(gridSize, critterCount)` pair. Within each grid size N (3×3 through 8×8), critter count ramps through its top 3 values (`max(1, N-2)` through `N`). This is what the puzzle generator reads; a loss just retries the current difficulty step, never demotes.
+  - **Level** (36 total, what the player sees - "Level 1/36" etc.): a round-within-the-ladder counter that climbs by exactly one on every single win, whether or not the difficulty step changed that round. Each difficulty step spans exactly 2 consecutive level numbers (2 wins per difficulty step), so e.g. Level 1 and Level 2 are both 3×3/1-critter, and Level 3 is the first round at 3×3/2-critters.
+  - Why split them: an earlier pass required 3 (then tried 1) wins per difficulty step with the level number tied directly to the difficulty-step index, which meant either the level counter stayed put for many rounds in a row (3 wins/step felt like a long wait with nothing visibly changing) or the puzzle itself changed every single round (1 win/step, tried and reverted the same day - a different, harder-feeling curve than intended). 2 wins/step with an independent, always-climbing level counter gets both: the number in the corner reliably goes up every round, but the actual puzzle only gets harder every other round.
+  - The full ladder, spelled out:
+
+    | Levels | Board | Critters |
+    |---|---|---|
+    | 1–2 | 3×3 | 1 |
+    | 3–4 | 3×3 | 2 |
+    | 5–6 | 3×3 | 3 |
+    | 7–8 | 4×4 | 2 |
+    | 9–10 | 4×4 | 3 |
+    | 11–12 | 4×4 | 4 |
+    | 13–14 | 5×5 | 3 |
+    | 15–16 | 5×5 | 4 |
+    | 17–18 | 5×5 | 5 |
+    | 19–20 | 6×6 | 4 |
+    | 21–22 | 6×6 | 5 |
+    | 23–24 | 6×6 | 6 |
+    | 25–26 | 7×7 | 5 |
+    | 27–28 | 7×7 | 6 |
+    | 29–30 | 7×7 | 7 |
+    | 31–32 | 8×8 | 6 |
+    | 33–34 | 8×8 | 7 |
+    | 35–36 | 8×8 | 8 |
 - **Why it's not a full 1..N ramp per size**: critter count, not board size, drives solving difficulty (masking and ties both come from critters being close enough together to compete for "nearest"). Spreading a low critter count over a *bigger* board makes critters farther apart and the puzzle easier, not harder. An initial version ramped every size from 1 critter up to N, which meant every new size reset straight back to trivial - the biggest, emptiest board yet with only 1 critter on it - immediately after the hardest point of the previous size. That's an oscillating curve, not an escalating one.
-- **The fix**: each size only uses its top 3 critter counts - `max(1, N-2)` through `N` - so the *floor* difficulty climbs every size instead of resetting: 3×3 starts at 33% critter density, 4×4 at 50%, 5×5 at 60%, 6×6 at 67%, 7×7 at 71%, 8×8 at 75%. Every size still ends at its own "full" level (N critters on an N×N board, one per row/column - the classic non-attacking-rooks case), so the top of the ladder is unchanged; only the bottom of each size's ramp rises. This is **18 levels**: originally 3 wins each (54 total), trimmed 2026-09-21 first to 2 wins each (36 total) after feedback that 9 wins to clear one grid size felt like too long a wait, then trimmed again the same day to **1 win each, 18 wins to clear the ladder once**, after feedback that players shouldn't have to count tiers/sub-levels at all - every round winning should just read as "a level," full stop. 18 levels of content was kept throughout all three passes; only the pacing per level changed. Less raw content than a full 1..N ramp would give (that was 33 levels/99 wins), traded deliberately for a curve that actually escalates. Other ways to extend play length are still open (see the retention discussion elsewhere) - this isn't the only lever for that, and an 18-round total ladder puts more weight on those other levers (post-ladder replay variety, the leaderboard/streak loops) to sustain play past a single sitting.
-- A 1-critter level (only 3×3's opening level now) has no masking and no ties possible (nothing to be nearest *relative to*) - every arrow just points straight at the one critter - a deliberately trivial opener, not an oversight.
-- Higher levels bias generation toward more ✦ ties, which are genuinely harder to triangulate. Implemented by sampling a batch of unique-solution candidates per round, sorting by tie count, and keeping a window around the percentile matching the current level (0 to 17 of 18) - early levels skew toward the least-tied candidates available, the last level skews toward the most-tied ones.
-- A later level could add a second constraint layer (colored regions, as in Dogdoku) on top of one-per-row/column for a further difficulty jump.
-- Technical note: brute-force uniqueness checking stays instant through roughly 8×8 *for a full permutation* (checking one random candidate against the full permutation space at a time, ~n! work, rather than cross-checking every candidate against every other one, ~n!² work). Partial permutations (fewer critters than rows) have a much larger placement space at mid-range counts - a 6-critter 8×8 board has 564,480 possible placements, versus 40,320 for the full 8-critter case. Past a fixed cap (50,000 placements), generation samples a large deduplicated random subset as the comparison universe instead of enumerating the true full space. This affects 3 of the 18 levels (7×7 with 5 critters; 8×8 with 6 or 7 critters): their "provably unique" guarantee is really "verified unique against a large representative sample," not a mathematical proof over every possible placement, unlike every other level. Worst-case generation time measured at ~950ms server-side; expect a brief pause on-device at those specific levels, not a freeze.
+- **The fix**: each size only uses its top 3 critter counts - `max(1, N-2)` through `N` - so the *floor* difficulty climbs every size instead of resetting: 3×3 starts at 33% critter density, 4×4 at 50%, 5×5 at 60%, 6×6 at 67%, 7×7 at 71%, 8×8 at 75%. Every size still ends at its own "full" difficulty step (N critters on an N×N board, one per row/column - the classic non-attacking-rooks case), so the top of the ladder is unchanged; only the bottom of each size's ramp rises. Less raw content than a full 1..N ramp would give (that was 33 difficulty steps/99 wins), traded deliberately for a curve that actually escalates. Other ways to extend play length are still open (see the retention discussion elsewhere) - this isn't the only lever for that, and a 36-round total ladder puts more weight on those other levers (post-ladder replay variety, the leaderboard/streak loops) to sustain play past a single sitting.
+- A 1-critter difficulty step (only 3×3's opening one now) has no masking and no ties possible (nothing to be nearest *relative to*) - every arrow just points straight at the one critter - a deliberately trivial opener, not an oversight.
+- Higher difficulty steps bias generation toward more ✦ ties, which are genuinely harder to triangulate. Implemented by sampling a batch of unique-solution candidates per round, sorting by tie count, and keeping a window around the percentile matching the current difficulty step (0 to 17 of 18) - early steps skew toward the least-tied candidates available, the last step skews toward the most-tied ones.
+- A later difficulty step could add a second constraint layer (colored regions, as in Dogdoku) on top of one-per-row/column for a further difficulty jump.
+- Technical note: brute-force uniqueness checking stays instant through roughly 8×8 *for a full permutation* (checking one random candidate against the full permutation space at a time, ~n! work, rather than cross-checking every candidate against every other one, ~n!² work). Partial permutations (fewer critters than rows) have a much larger placement space at mid-range counts - a 6-critter 8×8 board has 564,480 possible placements, versus 40,320 for the full 8-critter case. Past a fixed cap (50,000 placements), generation samples a large deduplicated random subset as the comparison universe instead of enumerating the true full space. This affects 3 of the 18 difficulty steps (7×7 with 5 critters; 8×8 with 6 or 7 critters): their "provably unique" guarantee is really "verified unique against a large representative sample," not a mathematical proof over every possible placement, unlike every other step. Worst-case generation time measured at ~950ms server-side; expect a brief pause on-device at those specific steps, not a freeze.
 
 ## Power-ups
 
@@ -85,7 +110,7 @@ The free first-tap safety guarantee (see Board & generation rules) sits outside 
 
 ## Open questions still needing a decision
 
-- [x] Levels-per-grid-size pacing — superseded 2026-09-23 by the 18-level critter-count ramp, win count trimmed twice 2026-09-21 (see Difficulty progression): each size's top 3 critter counts only, 1 win per level, no demotion on a loss
+- [x] Levels-per-grid-size pacing — superseded 2026-09-23 by the 18-difficulty-step critter-count ramp, win count settled 2026-09-21 (see Difficulty progression): each size's top 3 critter counts only, 2 wins per difficulty step, a 36-number level counter that climbs every win regardless, no demotion on a loss
 - [x] Exact star-rating thresholds — decided 2026-09-21: lives kept only (3/2/0-1 lives → 3★/2★/1★)
 - [x] Stars → coins conversion rate — decided 2026-09-21: 1 coin per star
 - [x] Daily streak definition — decided 2026-09-21: see Scoring section; first round of the day decides it, an unshielded loss breaks it

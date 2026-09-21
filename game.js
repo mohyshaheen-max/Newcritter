@@ -3,9 +3,9 @@
   const MAX_GRID = 8; // spec's brute-force-feasible ceiling; past this, generation needs a constraint solver instead
   const MAX_LIVES = 3;
 
-  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23; win-count trimmed
-  // 2026-09-21 first to 2 wins/level, then to 1 win/level per feedback that players shouldn't
-  // have to count sub-levels at all - every single win should read as "a level," full stop):
+  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23; win-count settled
+  // 2026-09-21 at 2 wins per difficulty step, after briefly trying 1 - that made the *puzzle*
+  // change every round, which turned out to be a different ask than what was actually wanted):
   // critter count alone drives solving difficulty (masking/ties), not board size - spreading a
   // low critter count over a bigger board makes critters farther apart and the puzzle *easier*,
   // not harder. An earlier version ramped critter count 1..N at every grid size, which meant
@@ -13,14 +13,29 @@
   // after the hardest point of the previous size - an oscillating, not escalating, curve. Now
   // each size only uses its top 3 critter counts (N-2, N-1, N, clamped at 1), so the density
   // floor climbs every size (33% -> 50% -> 60% -> 67% -> 71% -> 75%) instead of crashing back
-  // down. 3+3+3+3+3+3 = 18 levels, 1 win each, 18 wins to clear the ladder once - same 18-level
-  // shape/content as before, now with every win advancing the level counter by exactly one.
-  const TIER_WINS_REQUIRED = 1;
+  // down. 3+3+3+3+3+3 = 18 difficulty steps, 2 wins each = 36 wins to clear the ladder once.
+  //
+  // What changes vs. what's just numbered: TIERS below is still the 18 (gridSize, critterCount)
+  // difficulty steps - that's what the puzzle generator reads. But the player-facing "Level"
+  // number is NOT this array's index - it's displayLevel() below, which counts every single
+  // *round played* (1 through 36), climbing by exactly one on every win even on rounds where the
+  // difficulty step doesn't change (i.e. Level 1 and Level 2 are both 3x3/1-critter; Level 3 is
+  // where it steps up to 2 critters). This split - fewer, chunkier difficulty steps under the
+  // hood, but a level counter that always visibly moves - is deliberate: players kept losing
+  // track of how many rounds they'd need at the same difficulty before anything visibly changed.
+  const TIER_WINS_REQUIRED = 2;
   const TIERS = [];
   for (let n = MIN_GRID; n <= MAX_GRID; n++) {
     const minCount = Math.max(1, n - 2);
     for (let c = minCount; c <= n; c++) TIERS.push({ gridSize: n, critterCount: c });
   }
+  const TOTAL_LEVELS = TIERS.length * TIER_WINS_REQUIRED;
+  // The round-within-the-whole-ladder number (1-based) currently being played, per the split
+  // explained above: every difficulty step spans TIER_WINS_REQUIRED consecutive level numbers.
+  // Capped at TOTAL_LEVELS - once the last difficulty step is reached, tierWins keeps counting
+  // wins there indefinitely (there's nothing left to advance to), so the raw formula would
+  // otherwise climb straight past the ladder's total forever.
+  function displayLevel() { return Math.min(TOTAL_LEVELS, tierIndex * TIER_WINS_REQUIRED + tierWins + 1); }
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
   const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻', '🦝', '🐨', '🦔'];
@@ -769,7 +784,7 @@
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
-    el.level.textContent = `Level ${tierIndex + 1}/${TIERS.length} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
+    el.level.textContent = `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
     updateStats();
     render();
   }
@@ -1050,17 +1065,15 @@
 
     const wasAtLastTier = tierIndex >= TIERS.length - 1;
     tierWins++;
-    let tierAdvanced = false;
     if (!wasAtLastTier && tierWins >= TIER_WINS_REQUIRED) {
       tierIndex++;
       tierWins = 0;
-      tierAdvanced = true;
       // Power-ups intro (2026-09-21 product decision): held back from the opening tutorial and
-      // introduced instead the first time a player clears a tier, on the theory they should
-      // learn the core arrow/tie/critter loop cold before another system gets layered on top.
-      // Gated purely on the "seen it" flag rather than this specific tier index, since the tier
-      // list's shape has already changed twice - checking the flag is robust to a third change,
-      // checking `tierIndex === 1` wouldn't be.
+      // introduced instead the first time a player clears a difficulty step, on the theory they
+      // should learn the core arrow/tie/critter loop cold before another system gets layered on
+      // top. Gated purely on the "seen it" flag rather than this specific tier index, since the
+      // tier list's shape has already changed twice - checking the flag is robust to a third
+      // change, checking `tierIndex === 1` wouldn't be.
       if (shouldShowPowerupsIntro()) pendingPowerupsIntro = true;
     }
     const tier = currentTier();
@@ -1069,15 +1082,12 @@
     updateStats();
     setTimeout(() => {
       const starText = '⭐'.repeat(stars);
-      let progressText;
-      if (wasAtLastTier) {
-        progressText = `You've maxed out the ladder — ${MAX_GRID}×${MAX_GRID} with ${tier.critterCount} critters!`;
-      } else if (tierAdvanced) {
-        progressText = `Level ${tierIndex + 1}/${TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
-      } else {
-        const winsNeeded = TIER_WINS_REQUIRED - tierWins;
-        progressText = `${winsNeeded} more win${winsNeeded === 1 ? '' : 's'} at this level to advance.`;
-      }
+      // Every win advances the displayed level number by exactly one, whether or not the
+      // underlying difficulty step (tier) also changed this round - see the ladder comment up
+      // top for why the two are deliberately decoupled.
+      const progressText = wasAtLastTier
+        ? `You've maxed out the ladder — ${MAX_GRID}×${MAX_GRID} with ${tier.critterCount} critters!`
+        : `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
       el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
       el.winOverlay.classList.remove('hidden');
     }, 300);
