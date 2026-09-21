@@ -153,7 +153,12 @@ h1 {
   transition: transform 0.08s ease, background 0.15s ease, outline 0.15s ease;
 }
 .cell.hidden:active { transform: scale(0.9); }
-.cell.hidden:hover { background: var(--cell-hidden-hover); }
+/* Real mouse hover only - on a touchscreen, :hover has no "leave" event to clear it, so a tile
+   the player just tapped/held gets stuck showing this highlight until they touch elsewhere,
+   reading as an unexplained color change (testers reported thinking it was a hint). */
+@media (hover: hover) and (pointer: fine) {
+  .cell.hidden:hover { background: var(--cell-hidden-hover); }
+}
 .cell.flagged { background: var(--cell-hidden); font-size: 1.1rem; }
 .cell.revealed { background: var(--cell-revealed); cursor: default; color: var(--accent-strong); font-size: 1.2rem; }
 .cell.critter { background: var(--cell-critter); cursor: default; font-size: 1.5rem; animation: shake 0.3s ease; }
