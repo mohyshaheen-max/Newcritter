@@ -7,6 +7,7 @@
   --accent-strong: #96611e;
   --success: #3f8f83;
   --danger: #b1494a;
+  --near-warning: #d1272b;
   --cell-hidden: #dfe3d2;
   --cell-hidden-hover: #d2d7c2;
   --cell-revealed: #ffffff;
@@ -24,6 +25,7 @@
     --accent-strong: #eab765;
     --success: #5fa8a0;
     --danger: #c1595a;
+    --near-warning: #ff5c5c;
     --cell-hidden: #24352a;
     --cell-hidden-hover: #2c4032;
     --cell-revealed: #1f2e24;
@@ -41,6 +43,7 @@
   --accent-strong: #eab765;
   --success: #5fa8a0;
   --danger: #c1595a;
+  --near-warning: #ff5c5c;
   --cell-hidden: #24352a;
   --cell-hidden-hover: #2c4032;
   --cell-revealed: #1f2e24;
@@ -155,7 +158,7 @@ h1 {
 .cell.revealed { background: var(--cell-revealed); cursor: default; color: var(--accent-strong); font-size: 1.2rem; }
 .cell.critter { background: var(--cell-critter); cursor: default; font-size: 1.5rem; animation: shake 0.3s ease; }
 .cell.revealed.decoded { font-size: 0.95rem; letter-spacing: -1px; }
-.cell.revealed.near { color: var(--danger); font-weight: 700; }
+.cell.revealed.near { color: var(--near-warning); font-weight: 700; }
 .cell.pulse-highlight { outline: 3px solid var(--accent); outline-offset: -3px; }
 .pulse-count {
   position: absolute;

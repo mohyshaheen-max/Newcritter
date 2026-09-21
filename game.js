@@ -569,6 +569,13 @@
     state.lives = 1;
     state.roundOver = false;
     el.continueOverlay.classList.add('hidden');
+    // The critter tap that cost your 3rd life can itself be the one that completes the full
+    // set (accounted for by earlier reveals/flags) - without this, the round would be stuck
+    // waiting for a manual tap on a tile the game already knows is safe.
+    if (allCrittersFlaggedCorrectly()) {
+      autoCompleteRound();
+      return;
+    }
     updateStats();
   }
 
