@@ -9,11 +9,7 @@ binding = "ASSETS"
 [triggers]
 crons = ["5 0 * * 1"] # weekly reward computation, 00:05 UTC every Monday
 
-# D1 binding for the leaderboard - commented out until the database exists.
-# `wrangler d1 create compass-critters-leaderboard` prints the database_id to paste in below,
-# then uncomment this block. wrangler deploy treats this file as the source of truth for
-# bindings, so a dashboard-only binding would be stripped on the next auto-deploy.
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "compass-critters-leaderboard"
-# database_id = "PASTE_DATABASE_ID_HERE"
+[[d1_databases]]
+binding = "DB"
+database_name = "compass-critters-leaderboard"
+database_id = "6c8ed1a4-1055-47a9-aaa3-3d3204ca1928"
