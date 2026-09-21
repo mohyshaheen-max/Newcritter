@@ -130,7 +130,7 @@
   function isEndlessMode() { return tierIndex >= TIERS.length - 1; }
 
   // Power-ups intro: shown once, the first time a player clears a tier (see winRound). Set when
-  // that happens and consumed by the win overlay's "Play again" handler, which shows the intro
+  // that happens and consumed by the win overlay's "Next round" handler, which shows the intro
   // modal instead of immediately starting the next round.
   const POWERUPS_INTRO_SEEN_KEY = 'compassCritters.powerupsIntroSeen.v1';
   let pendingPowerupsIntro = false;
