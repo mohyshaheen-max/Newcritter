@@ -74,6 +74,16 @@
     howToPlayBtn: document.getElementById('howToPlayBtn'),
     powerupsIntroOverlay: document.getElementById('powerupsIntroOverlay'),
     powerupsIntroCloseBtn: document.getElementById('powerupsIntroCloseBtn'),
+    leaderboardTabGlobal: document.getElementById('leaderboardTabGlobal'),
+    leaderboardTabFriends: document.getElementById('leaderboardTabFriends'),
+    friendsBtn: document.getElementById('friendsBtn'),
+    friendsOverlay: document.getElementById('friendsOverlay'),
+    friendCodeVal: document.getElementById('friendCodeVal'),
+    copyFriendCodeBtn: document.getElementById('copyFriendCodeBtn'),
+    friendCodeInput: document.getElementById('friendCodeInput'),
+    addFriendBtn: document.getElementById('addFriendBtn'),
+    friendsList: document.getElementById('friendsList'),
+    friendsCloseBtn: document.getElementById('friendsCloseBtn'),
   };
 
   let toastTimer = null;
@@ -224,14 +234,22 @@
   }
 
   // --- Leaderboard (2026-09-21 product decision): anonymous playerId + self-chosen nickname,
-  // global-only (no friends/accounts - that needs a real social graph, deferred), weekly total
-  // stars as the score metric, ISO-8601 week boundary (Mon-Sun, UTC) computed server-side so
-  // every player shares one canonical reset regardless of local timezone. Coin rewards for top
-  // weekly ranks are computed server-side (see worker.js) and claimed on load - this is why
-  // /api/submit-score clamps stars itself rather than trusting the client's cumulative total.
-  // All calls are relative (same origin as the Worker serving this page) and fire-and-forget:
-  // a dropped call just means this round isn't reflected on the board yet, never a gameplay
-  // interruption. See SPEC.md's Scoring section.
+  // weekly total stars as the score metric, ISO-8601 week boundary (Mon-Sun, UTC) computed
+  // server-side so every player shares one canonical reset regardless of local timezone. Coin
+  // rewards for top weekly ranks are computed server-side (see worker.js) and claimed on load -
+  // this is why /api/submit-score clamps stars itself rather than trusting the client's
+  // cumulative total. All calls are relative (same origin as the Worker serving this page) and
+  // fire-and-forget: a dropped call just means this round isn't reflected on the board yet,
+  // never a gameplay interruption. See SPEC.md's Scoring section.
+  //
+  // --- Friends (2026-09-21 product decision): friend codes instead of real accounts, since the
+  // existing anonymous playerId system already covers everything a lightweight social graph
+  // needs. A short server-generated code identifies your player row; entering someone else's
+  // code links you both immediately (symmetric, no accept step). Friends get their own
+  // leaderboard tab (scoped to just you + your friends, no rank cap) alongside the global one,
+  // plus a once-a-week, one-coin gift you can send each friend - deliberately capped (one gift
+  // per friend per direction per week, no self-gifting) since there's no real identity behind a
+  // code to stop someone from farming alt accounts otherwise. See SPEC.md's Friends section.
   const PLAYER_ID_KEY = 'compassCritters.playerId.v1';
   const NICKNAME_KEY = 'compassCritters.nickname.v1';
 
@@ -266,13 +284,17 @@
   }
 
   const playerId = ensurePlayerId();
+  let myFriendCode = null; // populated once registerPlayer or openFriends() succeeds
 
   function registerPlayer(nickname) {
     fetch('/api/player', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ playerId, nickname }),
-    }).catch(() => { /* offline or API unavailable - nickname is still saved locally */ });
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data && data.friendCode) myFriendCode = data.friendCode; })
+      .catch(() => { /* offline or API unavailable - nickname is still saved locally */ });
   }
 
   (function ensureNickname() {
@@ -312,26 +334,57 @@
     } catch (err) { /* offline or API unavailable - will retry next load */ }
   }
 
+  async function checkUnclaimedGifts() {
+    try {
+      const res = await fetch(`/api/gifts?playerId=${encodeURIComponent(playerId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.unclaimed || data.unclaimed.length === 0) return;
+      const claimRes = await fetch('/api/gifts/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ playerId }),
+      });
+      if (!claimRes.ok) return;
+      const claimData = await claimRes.json();
+      if (claimData.totalCoins > 0) {
+        coins += claimData.totalCoins;
+        persistSave();
+        updateStats();
+        const names = claimData.fromNicknames || [];
+        const label = names.length === 1 ? `from ${names[0]}` : `from ${names.length} friends`;
+        showToast(`🎁 Gift ${label}: +${claimData.totalCoins} 🪙!`);
+      }
+    } catch (err) { /* offline or API unavailable - will retry next load */ }
+  }
+
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
   }
 
-  async function openLeaderboard() {
-    el.leaderboardOverlay.classList.remove('hidden');
-    el.leaderboardNicknameVal.textContent = getNickname() || '';
+  // Shared between the Global and Friends tabs of the same modal - only the endpoint and the
+  // empty-state copy differ, so this stays one function rather than two near-duplicates.
+  async function loadLeaderboard(scope) {
+    el.leaderboardTabGlobal.classList.toggle('active', scope === 'global');
+    el.leaderboardTabFriends.classList.toggle('active', scope === 'friends');
     el.leaderboardWeekLabel.textContent = '';
     el.leaderboardSelfRow.classList.add('hidden');
     el.leaderboardList.innerHTML = '<p class="leaderboard-empty">Loading…</p>';
     try {
-      const res = await fetch(`/api/leaderboard?playerId=${encodeURIComponent(playerId)}`);
+      const url = scope === 'friends'
+        ? `/api/friends/leaderboard?playerId=${encodeURIComponent(playerId)}`
+        : `/api/leaderboard?playerId=${encodeURIComponent(playerId)}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('leaderboard request failed');
       const data = await res.json();
       el.leaderboardWeekLabel.textContent = `Week ${data.weekId}`;
       const entries = data.entries || [];
       if (entries.length === 0) {
-        el.leaderboardList.innerHTML = '<p class="leaderboard-empty">No scores yet this week — be the first!</p>';
+        el.leaderboardList.innerHTML = scope === 'friends'
+          ? '<p class="leaderboard-empty">No friends yet — add some in 👥 Friends!</p>'
+          : '<p class="leaderboard-empty">No scores yet this week — be the first!</p>';
       } else {
         el.leaderboardList.innerHTML = entries.map((e) => `
           <div class="leaderboard-row${e.playerId === playerId ? ' self' : ''}">
@@ -340,7 +393,9 @@
             <span class="lb-stars">⭐ ${e.stars}</span>
           </div>`).join('');
       }
-      if (data.self && !entries.some((e) => e.playerId === playerId)) {
+      // Friends scope always includes everyone (small list, no rank cap), so there's no separate
+      // "you're off the list" row to show there - only the global top-100 view needs one.
+      if (scope === 'global' && data.self && !entries.some((e) => e.playerId === playerId)) {
         el.leaderboardSelfRow.textContent = `You: #${data.self.rank} · ⭐ ${data.self.stars}`;
         el.leaderboardSelfRow.classList.remove('hidden');
       }
@@ -350,8 +405,16 @@
     }
   }
 
+  function openLeaderboard() {
+    el.leaderboardOverlay.classList.remove('hidden');
+    el.leaderboardNicknameVal.textContent = getNickname() || '';
+    loadLeaderboard('global');
+  }
+
   el.leaderboardBtn.addEventListener('click', openLeaderboard);
   el.leaderboardCloseBtn.addEventListener('click', () => el.leaderboardOverlay.classList.add('hidden'));
+  el.leaderboardTabGlobal.addEventListener('click', () => loadLeaderboard('global'));
+  el.leaderboardTabFriends.addEventListener('click', () => loadLeaderboard('friends'));
   el.leaderboardEditNicknameBtn.addEventListener('click', () => {
     el.nicknameInput.value = getNickname() || '';
     el.nicknameOverlay.classList.remove('hidden');
@@ -366,7 +429,94 @@
   });
   el.nicknameSkipBtn.addEventListener('click', () => el.nicknameOverlay.classList.add('hidden'));
 
+  function renderFriendsList(friends) {
+    if (!friends.length) {
+      el.friendsList.innerHTML = '<p class="leaderboard-empty">No friends yet — share your code above!</p>';
+      return;
+    }
+    el.friendsList.innerHTML = friends.map((f) => `
+      <div class="leaderboard-row">
+        <span class="lb-nickname">${escapeHtml(f.nickname)}</span>
+        <button class="btn-secondary lb-gift-btn" data-friend-id="${f.playerId}" ${f.giftedThisWeek ? 'disabled' : ''}>${f.giftedThisWeek ? 'Gifted' : '🎁 Gift'}</button>
+      </div>`).join('');
+    el.friendsList.querySelectorAll('.lb-gift-btn').forEach((btn) => {
+      btn.addEventListener('click', () => sendGift(btn.dataset.friendId, btn));
+    });
+  }
+
+  async function sendGift(toPlayerId, btnEl) {
+    btnEl.disabled = true;
+    try {
+      const res = await fetch('/api/gift', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fromPlayerId: playerId, toPlayerId }),
+      });
+      if (!res.ok) throw new Error('gift failed');
+      btnEl.textContent = 'Gifted';
+      showToast('🎁 Gift sent!');
+    } catch (err) {
+      btnEl.disabled = false;
+      showToast('Could not send gift — try again later.');
+    }
+  }
+
+  async function openFriends() {
+    el.friendsOverlay.classList.remove('hidden');
+    el.friendCodeVal.textContent = myFriendCode || '------';
+    el.friendsList.innerHTML = '<p class="leaderboard-empty">Loading…</p>';
+    try {
+      const res = await fetch(`/api/friends?playerId=${encodeURIComponent(playerId)}`);
+      if (!res.ok) throw new Error('friends request failed');
+      const data = await res.json();
+      if (data.friendCode) myFriendCode = data.friendCode;
+      el.friendCodeVal.textContent = myFriendCode || '------';
+      renderFriendsList(data.friends || []);
+    } catch (err) {
+      el.friendsList.innerHTML = '<p class="leaderboard-empty">Friends unavailable right now.</p>';
+    }
+  }
+
+  el.friendsBtn.addEventListener('click', openFriends);
+  el.friendsCloseBtn.addEventListener('click', () => el.friendsOverlay.classList.add('hidden'));
+
+  el.copyFriendCodeBtn.addEventListener('click', async () => {
+    if (!myFriendCode) return;
+    try {
+      await navigator.clipboard.writeText(myFriendCode);
+      showToast('Code copied!');
+    } catch (err) {
+      showToast(`Your code: ${myFriendCode}`); // clipboard blocked - at least surface it clearly
+    }
+  });
+
+  el.addFriendBtn.addEventListener('click', async () => {
+    const code = el.friendCodeInput.value.trim().toUpperCase();
+    if (!code) return;
+    el.addFriendBtn.disabled = true;
+    try {
+      const res = await fetch('/api/friends/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ playerId, friendCode: code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || 'Could not add that friend.');
+      } else {
+        showToast(`👥 Added ${data.friend.nickname}!`);
+        el.friendCodeInput.value = '';
+        openFriends();
+      }
+    } catch (err) {
+      showToast('Could not add friend — try again later.');
+    } finally {
+      el.addFriendBtn.disabled = false;
+    }
+  });
+
   checkUnclaimedRewards();
+  checkUnclaimedGifts();
 
   let state = null;
 

@@ -62,6 +62,7 @@
   <div class="controls">
     <button class="btn-primary" id="newRoundBtn">New round</button>
     <button class="btn-secondary" id="leaderboardBtn">🏆 Leaderboard</button>
+    <button class="btn-secondary" id="friendsBtn">👥 Friends</button>
     <button class="btn-secondary" id="howToPlayBtn">❓ How to play</button>
   </div>
 
@@ -97,12 +98,31 @@
   <div class="overlay hidden" id="leaderboardOverlay">
     <div class="modal modal-wide">
       <h2>Weekly Leaderboard</h2>
+      <div class="tab-row">
+        <button class="tab-btn active" id="leaderboardTabGlobal">Global</button>
+        <button class="tab-btn" id="leaderboardTabFriends">Friends</button>
+      </div>
       <p id="leaderboardWeekLabel"></p>
       <p class="leaderboard-you">Playing as <strong id="leaderboardNicknameVal"></strong> · <button class="btn-link" id="leaderboardEditNicknameBtn">change</button></p>
       <div class="leaderboard-list" id="leaderboardList"></div>
       <p class="leaderboard-self hidden" id="leaderboardSelfRow"></p>
       <div class="modal-actions">
         <button class="btn-secondary" id="leaderboardCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="friendsOverlay">
+    <div class="modal modal-wide">
+      <h2>Friends</h2>
+      <p class="friends-code-row">Your code: <strong id="friendCodeVal">------</strong> <button class="btn-link" id="copyFriendCodeBtn">Copy</button></p>
+      <div class="friend-add-row">
+        <input type="text" id="friendCodeInput" maxlength="6" placeholder="Friend's code" class="nickname-input">
+        <button class="btn-primary" id="addFriendBtn">Add</button>
+      </div>
+      <div class="leaderboard-list" id="friendsList"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="friendsCloseBtn">Close</button>
       </div>
     </div>
   </div>
@@ -128,7 +148,7 @@
   <div class="overlay hidden" id="nicknameOverlay">
     <div class="modal">
       <h2>Pick a nickname</h2>
-      <p>Shown on the global leaderboard only — no account, no friends list, nothing else tied to you.</p>
+      <p>Shown on the global leaderboard and to anyone you share your friend code with — no account, nothing else tied to you.</p>
       <input type="text" id="nicknameInput" maxlength="20" placeholder="Your nickname" class="nickname-input">
       <div class="modal-actions">
         <button class="btn-primary" id="nicknameConfirmBtn">Save</button>
