@@ -1620,9 +1620,15 @@
       explain: 'Flagging marks a tile as a critter, so you never accidentally tap it — that’s the real goal!',
     },
     {
+      // Two valid ways to complete this step, on purpose: tapping the critter (a mistake, shown
+      // as one) or flagging it (the smart play, per the previous step's lesson) - explainTap and
+      // explainFlag are picked at completion time based on which one actually happened. Flagging
+      // any OTHER hidden tile is allowed too (matches real gameplay) but doesn't complete the
+      // step, same as a wrong tap doing nothing on a 'tap' step.
       kind: 'explore',
       prompt: 'One more critter is hiding — go find it!',
-      explain: 'Oops, that’s a critter — costs a life! Next time, flag a tile like this instead of tapping it.',
+      explainTap: 'Oops, that’s a critter — costs a life! Next time, flag a tile like this instead of tapping it.',
+      explainFlag: 'Nice — flagging it avoids the life loss completely! That’s exactly what to do when you’re sure.',
     },
     {
       kind: 'info',
@@ -1638,6 +1644,7 @@
   let tutorialStep = 0;
   let tutorialPhase = 'prompt'; // 'prompt' (waiting for the target tap/flag, or still exploring) or 'explain' (showing what happened) - unused by 'info' steps, which always show their text immediately
   let tutorialCells = null; // [r][c] = { status: 'hidden'|'revealed'|'critter', flagged: bool }
+  let exploreFoundVia = null; // 'tap' | 'flag' - which action completed the current 'explore' step, so renderTutorial can pick the matching explain text
 
   function renderTutorial() {
     el.grid.innerHTML = '';
@@ -1657,7 +1664,12 @@
         el.grid.appendChild(div);
       }
     }
-    el.tutorialText.textContent = isInfo ? step.text : (tutorialPhase === 'prompt' ? step.prompt : step.explain);
+    let text;
+    if (isInfo) text = step.text;
+    else if (tutorialPhase === 'prompt') text = step.prompt;
+    else if (step.kind === 'explore') text = exploreFoundVia === 'flag' ? step.explainFlag : step.explainTap;
+    else text = step.explain;
+    el.tutorialText.textContent = text;
     el.tutorialNextBtn.classList.toggle('hidden', !isInfo && tutorialPhase !== 'explain');
     el.tutorialNextBtn.textContent = tutorialStep === TUTORIAL_STEPS.length - 1 ? 'Start playing' : 'Next';
   }
@@ -1677,24 +1689,44 @@
       if (cell.status !== 'hidden' || cell.flagged) return; // already revealed, or flagged out of play
       const isCritter = TUTORIAL_PERM[r] === c;
       cell.status = isCritter ? 'critter' : 'revealed';
-      if (isCritter) tutorialPhase = 'explain'; // found it - stays in 'prompt' otherwise, so exploring continues
+      if (isCritter) {
+        exploreFoundVia = 'tap';
+        tutorialPhase = 'explain'; // found it - stays in 'prompt' otherwise, so exploring continues
+      }
       renderTutorial();
     }
   }
 
   function handleTutorialFlag(r, c) {
     const step = TUTORIAL_STEPS[tutorialStep];
-    if (step.kind !== 'flag' || tutorialPhase !== 'prompt') return;
-    if (r !== step.r || c !== step.c) return;
-    tutorialCells[r][c].flagged = true;
-    tutorialPhase = 'explain';
-    renderTutorial();
+    if (tutorialPhase !== 'prompt') return;
+    if (step.kind === 'flag') {
+      if (r !== step.r || c !== step.c) return;
+      tutorialCells[r][c].flagged = true;
+      tutorialPhase = 'explain';
+      renderTutorial();
+      return;
+    }
+    if (step.kind === 'explore') {
+      // Flagging the critter is just as valid a way to complete this step as tapping it - in
+      // fact it's the correct play, per the previous step's lesson. Flagging anything else is
+      // allowed (matches real gameplay - flagging is always free) but doesn't complete the step.
+      const cell = tutorialCells[r][c];
+      if (cell.status !== 'hidden' || cell.flagged) return;
+      cell.flagged = true;
+      if (TUTORIAL_PERM[r] === c) {
+        exploreFoundVia = 'flag';
+        tutorialPhase = 'explain';
+      }
+      renderTutorial();
+    }
   }
 
   function startTutorial() {
     tutorialActive = true;
     tutorialStep = 0;
     tutorialPhase = 'prompt';
+    exploreFoundVia = null;
     tutorialCells = Array.from({ length: TUTORIAL_N }, () => Array.from({ length: TUTORIAL_N }, () => ({ status: 'hidden', flagged: false })));
     document.documentElement.style.setProperty('--grid-size', TUTORIAL_N);
     document.body.classList.add('tutorial-mode');
