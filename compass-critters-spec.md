@@ -58,6 +58,13 @@ Decode exists specifically so ✦ ties can stay an intentionally weak, hard-to-t
 
 The free first-tap safety guarantee (see Board & generation rules) sits outside this economy entirely — it's baseline fairness, not a power-up.
 
+## Onboarding
+
+- Decided 2026-09-21 — a scripted interactive tutorial, not a slide-deck explainer: a new player's very first taps land on a small fixed 5×5 demo board (critters at opposite corners, entirely separate from the real tier ladder/coins/persistence) rendered with the actual grid CSS, so what they learn transfers directly. Four guided steps, each highlighting exactly one tappable tile and explaining what appears after tapping it: a plain arrow, a red/near arrow (within 2 tiles), a ✦ tie, and finally a critter tile itself (costs a life, Continue offer at 0). Taps on any tile other than the current target are simply ignored, not blocked or shaken.
+- Shown automatically only on a true first-ever launch (no save in localStorage at all). A device with an existing save - a returning player, or simply one who predates this feature - has its "seen it" flag set retroactively rather than being interrupted with a forced tutorial.
+- Replayable any time via a "❓ How to play" button next to the New round / Leaderboard controls; replaying overwrites the grid with the tutorial board and, on finish or skip, starts a fresh real round (any in-progress round's partial reveals are lost, same as tapping New round).
+- Considered and rejected: a slide-based modal walkthrough (simpler to build, but front-loads a lot of text before any real play) and contextual just-in-time tooltips fired off real gameplay events (lower effort, but ties/near-warnings don't reliably appear on a player's very first tiers, so the lesson could arrive too late or not at all).
+
 ## Scoring, streaks, and leaderboard rewards
 
 - **Stars**: decided 2026-09-21 — lives kept only, not power-ups used (simpler than spec's original framing): 3 lives kept = 3★, 2 lives kept = 2★, 0-1 lives kept = 1★ (any win is at least 1★).
@@ -82,6 +89,7 @@ The free first-tap safety guarantee (see Board & generation rules) sits outside 
 - [x] Daily streak definition — decided 2026-09-21: see Scoring section; first round of the day decides it, an unshielded loss breaks it
 - [x] Leaderboard scoring metric and reward structure — decided 2026-09-21: see Scoring section; anonymous+nickname global leaderboard, weekly total stars, server-issued coin payout by rank
 - [x] Pulse's exact unlock grid size — decided 2026-09-20: 5×5 and above
+- [x] First-time onboarding — decided 2026-09-21: see Onboarding section; scripted interactive tutorial on a fixed demo board, shown once on first-ever launch, replayable via How to play
 - [ ] Naming and visual direction (deferred, not urgent)
 - [ ] Cross-device streak/coin sync — currently localStorage-only, single device
 - [ ] Friends leaderboard — deferred until real accounts/a social graph exist; the current anonymous playerId+nickname model is sufficient for global-only ranking but not for a friends list

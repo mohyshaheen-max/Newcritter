@@ -66,6 +66,11 @@
     nicknameInput: document.getElementById('nicknameInput'),
     nicknameConfirmBtn: document.getElementById('nicknameConfirmBtn'),
     nicknameSkipBtn: document.getElementById('nicknameSkipBtn'),
+    tutorialBanner: document.getElementById('tutorialBanner'),
+    tutorialText: document.getElementById('tutorialText'),
+    tutorialNextBtn: document.getElementById('tutorialNextBtn'),
+    tutorialSkipBtn: document.getElementById('tutorialSkipBtn'),
+    howToPlayBtn: document.getElementById('howToPlayBtn'),
   };
 
   let toastTimer = null;
@@ -1099,8 +1104,116 @@
   window.__debugGetState = () => ({
     state, tierIndex, tierWins, TIERS, streak, coins,
     streakShieldArmed, lifeWardArmed, lastExtendDate, lastDecidedDate,
+    tutorialActive, tutorialStep,
   });
 
+  // --- Onboarding tutorial (2026-09-21 product decision): a scripted interactive walkthrough
+  // rather than a slide deck, so the very first thing a new player does is tap real tiles and
+  // watch a real arrow/red-warning/tie/critter appear - the actual grid rendering and CSS, not a
+  // mockup. Runs on a small fixed board entirely separate from `state`/the tier ladder/coins -
+  // it's a teaching fixture, not a real round, so nothing here touches persistence except the
+  // one "seen it" flag. Replayable any time via the How to play button.
+  const TUTORIAL_SEEN_KEY = 'compassCritters.tutorialSeen.v1';
+  const TUTORIAL_N = 5;
+  const TUTORIAL_PERM = [0, null, null, null, 4]; // critters at (0,0) and (4,4) on a 5x5 board
+  const TUTORIAL_GRID = computeClueGrid(TUTORIAL_PERM, TUTORIAL_N);
+  const TUTORIAL_STEPS = [
+    {
+      r: 0, c: 3,
+      prompt: 'Tap the glowing tile to reveal it.',
+      explain: 'That arrow points toward the nearest hidden critter. Head that direction and you’ll get closer.',
+    },
+    {
+      r: 0, c: 2,
+      prompt: 'Tap the next glowing tile.',
+      explain: 'When an arrow turns red, the nearest critter is within just 2 tiles — you’re getting close.',
+    },
+    {
+      r: 2, c: 2,
+      prompt: 'One more — tap the glowing tile.',
+      explain: '✦ means two critters are exactly tied for nearest, in different directions. It’s deliberately fuzzy — cross-reference a tile you’ve already revealed, or spend a Decode power-up later to see the tied directions directly.',
+    },
+    {
+      r: 0, c: 0,
+      prompt: 'Last one — this tile is different. Tap it anyway.',
+      explain: 'That was a critter — it costs a life, 3 per round. Lose all 3 and you’ll get a Continue offer before the round resets. Every other tile is completely safe to tap.',
+    },
+  ];
+
+  let tutorialActive = false;
+  let tutorialStep = 0;
+  let tutorialPhase = 'prompt'; // 'prompt' (waiting for the target tap) or 'explain' (showing what happened)
+  let tutorialCells = null;
+
+  function renderTutorial() {
+    el.grid.innerHTML = '';
+    const step = TUTORIAL_STEPS[tutorialStep];
+    for (let r = 0; r < TUTORIAL_N; r++) {
+      for (let c = 0; c < TUTORIAL_N; c++) {
+        const status = tutorialCells[r][c];
+        const div = document.createElement('div');
+        const near = status === 'revealed' && nearestDistanceSquared(TUTORIAL_PERM, TUTORIAL_N, r, c) <= NEAR_DISTANCE_SQUARED;
+        const isTarget = tutorialPhase === 'prompt' && r === step.r && c === step.c;
+        div.className = 'cell ' + status + (near ? ' near' : '') + (isTarget ? ' tutorial-target' : '');
+        if (status === 'revealed') div.textContent = TUTORIAL_GRID[r][c];
+        else if (status === 'critter') div.textContent = ANIMALS[r % ANIMALS.length];
+        div.addEventListener('click', () => handleTutorialTap(r, c));
+        el.grid.appendChild(div);
+      }
+    }
+    el.tutorialText.textContent = tutorialPhase === 'prompt' ? step.prompt : step.explain;
+    el.tutorialNextBtn.classList.toggle('hidden', tutorialPhase !== 'explain');
+    el.tutorialNextBtn.textContent = tutorialStep === TUTORIAL_STEPS.length - 1 ? 'Start playing' : 'Next';
+  }
+
+  function handleTutorialTap(r, c) {
+    if (tutorialPhase !== 'prompt') return;
+    const step = TUTORIAL_STEPS[tutorialStep];
+    if (r !== step.r || c !== step.c) return; // guided - taps elsewhere just don't do anything
+    tutorialCells[r][c] = TUTORIAL_PERM[r] === c ? 'critter' : 'revealed';
+    tutorialPhase = 'explain';
+    renderTutorial();
+  }
+
+  function startTutorial() {
+    tutorialActive = true;
+    tutorialStep = 0;
+    tutorialPhase = 'prompt';
+    tutorialCells = Array.from({ length: TUTORIAL_N }, () => Array(TUTORIAL_N).fill('hidden'));
+    document.documentElement.style.setProperty('--grid-size', TUTORIAL_N);
+    document.body.classList.add('tutorial-mode');
+    el.tutorialBanner.classList.remove('hidden');
+    renderTutorial();
+  }
+
+  function finishTutorial() {
+    tutorialActive = false;
+    try { localStorage.setItem(TUTORIAL_SEEN_KEY, '1'); } catch (err) { /* storage unavailable - will just replay next load */ }
+    document.body.classList.remove('tutorial-mode');
+    el.tutorialBanner.classList.add('hidden');
+    startRound();
+  }
+
+  el.tutorialNextBtn.addEventListener('click', () => {
+    if (tutorialStep >= TUTORIAL_STEPS.length - 1) { finishTutorial(); return; }
+    tutorialStep++;
+    tutorialPhase = 'prompt';
+    renderTutorial();
+  });
+  el.tutorialSkipBtn.addEventListener('click', finishTutorial);
+  el.howToPlayBtn.addEventListener('click', startTutorial);
+
   updateDebugPanel();
-  startRound();
+
+  // First-ever launch (no save at all yet) gets the tutorial before anything else. A returning
+  // player who already has a save predates this feature or has simply played before either way
+  // - mark it seen rather than interrupting them, since How to play covers the replay case.
+  if (loadSave()) {
+    try { localStorage.setItem(TUTORIAL_SEEN_KEY, '1'); } catch (err) { /* non-fatal */ }
+    startRound();
+  } else {
+    let alreadySeen = false;
+    try { alreadySeen = !!localStorage.getItem(TUTORIAL_SEEN_KEY); } catch (err) { /* non-fatal */ }
+    if (alreadySeen) startRound(); else startTutorial();
+  }
 })();
