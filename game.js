@@ -152,6 +152,30 @@
   // instant at 5x5/6x6 but would freeze the browser well before 8x8. Sampling a handful of
   // unique-solution candidates gives the same first-tap-safety and variety as a full pool,
   // without the quadratic blowup.
+  function tieCount(grid, n) {
+    let count = 0;
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (grid[r][c] === TIE) count++;
+    return count;
+  }
+
+  // Per spec: "higher tiers bias generation toward more ties, which are genuinely harder to
+  // triangulate." Sorts the sampled candidates by tie count and keeps a window around the
+  // percentile matching the current level - low levels skew toward the least-tied (easiest)
+  // candidates available, the top level skews toward the most-tied ones. Everything downstream
+  // still just picks uniformly at random from the (now pre-biased) pool.
+  function biasPoolByLevel(pool) {
+    if (pool.length <= 1) return pool;
+    const totalLevels = MAX_GRID - MIN_GRID + 1;
+    const target = totalLevels > 1 ? Math.min(level, totalLevels - 1) / (totalLevels - 1) : 0;
+    const sorted = pool
+      .map(entry => ({ entry, ties: tieCount(entry.grid, entry.perm.length) }))
+      .sort((a, b) => a.ties - b.ties);
+    const windowSize = Math.max(1, Math.ceil(sorted.length / 3));
+    const center = Math.round(target * (sorted.length - 1));
+    const start = Math.max(0, Math.min(sorted.length - windowSize, center - Math.floor(windowSize / 2)));
+    return sorted.slice(start, start + windowSize).map(w => w.entry);
+  }
+
   function buildUniqueSolutionPool(n) {
     const allPerms = permutationsOf(n);
     const poolTarget = Math.min(30, allPerms.length);
@@ -172,7 +196,7 @@
       const perm = allPerms[Math.floor(Math.random() * allPerms.length)];
       pool.push({ perm, grid: computeClueGrid(perm, n) });
     }
-    return pool;
+    return biasPoolByLevel(pool);
   }
 
   function startRound() {

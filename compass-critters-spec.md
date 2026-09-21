@@ -33,7 +33,7 @@ No move budget and no rationed information: every clue is always available for t
 ## Difficulty progression
 
 - Grid size scales up through levels (e.g. 3×3 → 4×4 → …), with critter count always matching grid size.
-- Higher tiers bias generation toward more ✦ ties, which are genuinely harder to triangulate.
+- Higher tiers bias generation toward more ✦ ties, which are genuinely harder to triangulate. Implemented by sampling a batch of unique-solution candidates per round, sorting by tie count, and keeping a window around the percentile matching the current level - low levels skew toward the least-tied candidates available, the top level skews toward the most-tied ones.
 - A later tier could add a second constraint layer (colored regions, as in Dogdoku) on top of one-per-row/column for a further difficulty jump.
 - Technical note: brute-force uniqueness checking stays instant through roughly 8×8; past that, generation should move to a constraint solver rather than checking every permutation. In practice, generating a candidate is fast enough at every size up to 8×8 only by checking one random candidate against the full permutation space at a time (~n! work) rather than cross-checking every candidate against every other one (~n!² work, which is what makes 8×8 infeasible without this).
 - Progression is 3×3 → 4×4 → 5×5 → 6×6 → 7×7 → 8×8, one win per size to advance (decided 2026-09-20). A loss (declining Continue) does not demote - the round just retries at the same size.
