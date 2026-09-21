@@ -935,6 +935,11 @@
     showToast(`Debug: simulated date is now ${todayDateString()} — win or lose a round to see the streak react`);
   });
 
+  // Testing-only: exposes internal state so an automated test harness can drive full
+  // playthroughs (tapping only known-safe tiles) without visually solving puzzles. Same
+  // removal note as the rest of the debug tooling - strip before the App Store build.
+  window.__debugGetState = () => ({ state, tierIndex, tierWins, TIERS, streak, coins });
+
   updateDebugPanel();
   startRound();
 })();
