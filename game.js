@@ -1596,14 +1596,18 @@
   const TUTORIAL_GRID = computeClueGrid(TUTORIAL_PERM, TUTORIAL_N);
   const TUTORIAL_STEPS = [
     {
+      kind: 'info',
+      text: '🐾 Critters are hiding on this board. Reveal every OTHER tile without tapping one!',
+    },
+    {
       kind: 'tap', r: 0, c: 3,
       prompt: 'Tap the glowing tile!',
-      explain: 'That arrow points to the closest critter. Follow it!',
+      explain: 'That arrow points toward the nearest critter — it’s a clue to help you avoid it, not a path to follow!',
     },
     {
       kind: 'tap', r: 0, c: 2,
       prompt: 'Tap again!',
-      explain: 'Red arrow = getting close!',
+      explain: 'Red = a critter is close by!',
     },
     {
       kind: 'tap', r: 2, c: 2,
@@ -1613,12 +1617,12 @@
     {
       kind: 'flag', r: 4, c: 4,
       prompt: 'Hold (or right-click) this tile to flag it!',
-      explain: 'Flags mark tiles you’re sure about. Totally optional!',
+      explain: 'Flagging marks a tile as a critter, so you never accidentally tap it — that’s the real goal!',
     },
     {
       kind: 'explore',
       prompt: 'One more critter is hiding — go find it!',
-      explain: 'Found it! Critters cost a life, 3 per round. Lose them all and you can Continue for one more shot.',
+      explain: 'Oops, that’s a critter — costs a life! Next time, flag a tile like this instead of tapping it.',
     },
     {
       kind: 'info',
