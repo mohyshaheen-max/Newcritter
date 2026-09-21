@@ -698,6 +698,7 @@
     el.shieldBtn.textContent = streakShieldArmed ? 'Shield: armed 🛡️' : 'Shield · 1 🪙';
 
     el.streak.textContent = streak;
+    updateDebugPanel();
     persistSave();
   }
 
@@ -766,16 +767,20 @@
   el.wardBtn.addEventListener('click', useWard);
   el.shieldBtn.addEventListener('click', useShield);
 
-  function updateDebugDateDisplay() {
-    el.debugDateVal.textContent = `Simulated date: ${todayDateString()}`;
+  // Shows the actual streak internals, not just the simulated date, so you can verify the
+  // mechanism is tracking correctly without guessing from the 🔥 stat alone. Only changes on
+  // its own when you win or lose a round - the advance-day button just moves what day it is.
+  function updateDebugPanel() {
+    el.debugDateVal.textContent =
+      `Simulated date: ${todayDateString()}  ·  lastDecided: ${lastDecidedDate || '—'}  ·  lastExtend: ${lastExtendDate || '—'}  ·  streak: ${streak}`;
   }
 
   el.debugAdvanceDayBtn.addEventListener('click', () => {
     debugDayOffset++;
-    updateDebugDateDisplay();
-    showToast(`Debug: simulated date is now ${todayDateString()}`);
+    updateDebugPanel();
+    showToast(`Debug: simulated date is now ${todayDateString()} — win or lose a round to see the streak react`);
   });
 
-  updateDebugDateDisplay();
+  updateDebugPanel();
   startRound();
 })();
