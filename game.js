@@ -54,6 +54,18 @@
     streak: document.getElementById('streakVal'),
     debugAdvanceDayBtn: document.getElementById('debugAdvanceDayBtn'),
     debugDateVal: document.getElementById('debugDateVal'),
+    leaderboardBtn: document.getElementById('leaderboardBtn'),
+    leaderboardOverlay: document.getElementById('leaderboardOverlay'),
+    leaderboardWeekLabel: document.getElementById('leaderboardWeekLabel'),
+    leaderboardNicknameVal: document.getElementById('leaderboardNicknameVal'),
+    leaderboardEditNicknameBtn: document.getElementById('leaderboardEditNicknameBtn'),
+    leaderboardList: document.getElementById('leaderboardList'),
+    leaderboardSelfRow: document.getElementById('leaderboardSelfRow'),
+    leaderboardCloseBtn: document.getElementById('leaderboardCloseBtn'),
+    nicknameOverlay: document.getElementById('nicknameOverlay'),
+    nicknameInput: document.getElementById('nicknameInput'),
+    nicknameConfirmBtn: document.getElementById('nicknameConfirmBtn'),
+    nicknameSkipBtn: document.getElementById('nicknameSkipBtn'),
   };
 
   let toastTimer = null;
@@ -190,6 +202,151 @@
     }
     persistSave();
   }
+
+  // --- Leaderboard (2026-09-21 product decision): anonymous playerId + self-chosen nickname,
+  // global-only (no friends/accounts - that needs a real social graph, deferred), weekly total
+  // stars as the score metric, ISO-8601 week boundary (Mon-Sun, UTC) computed server-side so
+  // every player shares one canonical reset regardless of local timezone. Coin rewards for top
+  // weekly ranks are computed server-side (see worker.js) and claimed on load - this is why
+  // /api/submit-score clamps stars itself rather than trusting the client's cumulative total.
+  // All calls are relative (same origin as the Worker serving this page) and fire-and-forget:
+  // a dropped call just means this round isn't reflected on the board yet, never a gameplay
+  // interruption. See SPEC.md's Scoring section.
+  const PLAYER_ID_KEY = 'compassCritters.playerId.v1';
+  const NICKNAME_KEY = 'compassCritters.nickname.v1';
+
+  function randomId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+      const r = (Math.random() * 16) | 0;
+      const v = ch === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  function ensurePlayerId() {
+    try {
+      let id = localStorage.getItem(PLAYER_ID_KEY);
+      if (!id) {
+        id = randomId();
+        localStorage.setItem(PLAYER_ID_KEY, id);
+      }
+      return id;
+    } catch (err) {
+      return randomId(); // storage unavailable - works for this session, won't persist
+    }
+  }
+
+  function getNickname() {
+    try { return localStorage.getItem(NICKNAME_KEY); } catch (err) { return null; }
+  }
+
+  function setNickname(nickname) {
+    try { localStorage.setItem(NICKNAME_KEY, nickname); } catch (err) { /* session-only */ }
+  }
+
+  const playerId = ensurePlayerId();
+
+  function registerPlayer(nickname) {
+    fetch('/api/player', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId, nickname }),
+    }).catch(() => { /* offline or API unavailable - nickname is still saved locally */ });
+  }
+
+  (function ensureNickname() {
+    if (getNickname()) return;
+    const defaultNickname = `Critter${Math.floor(1000 + Math.random() * 9000)}`;
+    setNickname(defaultNickname);
+    registerPlayer(defaultNickname);
+  })();
+
+  function submitScore(stars) {
+    fetch('/api/submit-score', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId, stars }),
+    }).catch(() => { /* fire-and-forget - a dropped submission just isn't on the board this week */ });
+  }
+
+  async function checkUnclaimedRewards() {
+    try {
+      const res = await fetch(`/api/rewards?playerId=${encodeURIComponent(playerId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.unclaimed || data.unclaimed.length === 0) return;
+      const claimRes = await fetch('/api/rewards/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ playerId }),
+      });
+      if (!claimRes.ok) return;
+      const claimData = await claimRes.json();
+      if (claimData.totalCoins > 0) {
+        coins += claimData.totalCoins;
+        persistSave();
+        updateStats();
+        showToast(`🏆 Weekly leaderboard reward: +${claimData.totalCoins} 🪙!`);
+      }
+    } catch (err) { /* offline or API unavailable - will retry next load */ }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  async function openLeaderboard() {
+    el.leaderboardOverlay.classList.remove('hidden');
+    el.leaderboardNicknameVal.textContent = getNickname() || '';
+    el.leaderboardWeekLabel.textContent = '';
+    el.leaderboardSelfRow.classList.add('hidden');
+    el.leaderboardList.innerHTML = '<p class="leaderboard-empty">Loading…</p>';
+    try {
+      const res = await fetch(`/api/leaderboard?playerId=${encodeURIComponent(playerId)}`);
+      if (!res.ok) throw new Error('leaderboard request failed');
+      const data = await res.json();
+      el.leaderboardWeekLabel.textContent = `Week ${data.weekId}`;
+      const entries = data.entries || [];
+      if (entries.length === 0) {
+        el.leaderboardList.innerHTML = '<p class="leaderboard-empty">No scores yet this week — be the first!</p>';
+      } else {
+        el.leaderboardList.innerHTML = entries.map((e) => `
+          <div class="leaderboard-row${e.playerId === playerId ? ' self' : ''}">
+            <span class="lb-rank">#${e.rank}</span>
+            <span class="lb-nickname">${escapeHtml(e.nickname)}</span>
+            <span class="lb-stars">⭐ ${e.stars}</span>
+          </div>`).join('');
+      }
+      if (data.self && !entries.some((e) => e.playerId === playerId)) {
+        el.leaderboardSelfRow.textContent = `You: #${data.self.rank} · ⭐ ${data.self.stars}`;
+        el.leaderboardSelfRow.classList.remove('hidden');
+      }
+    } catch (err) {
+      el.leaderboardWeekLabel.textContent = '';
+      el.leaderboardList.innerHTML = '<p class="leaderboard-empty">Leaderboard unavailable right now.</p>';
+    }
+  }
+
+  el.leaderboardBtn.addEventListener('click', openLeaderboard);
+  el.leaderboardCloseBtn.addEventListener('click', () => el.leaderboardOverlay.classList.add('hidden'));
+  el.leaderboardEditNicknameBtn.addEventListener('click', () => {
+    el.nicknameInput.value = getNickname() || '';
+    el.nicknameOverlay.classList.remove('hidden');
+  });
+  el.nicknameConfirmBtn.addEventListener('click', () => {
+    const val = el.nicknameInput.value.trim().slice(0, 20);
+    if (!val) return;
+    setNickname(val);
+    registerPlayer(val);
+    el.leaderboardNicknameVal.textContent = val;
+    el.nicknameOverlay.classList.add('hidden');
+  });
+  el.nicknameSkipBtn.addEventListener('click', () => el.nicknameOverlay.classList.add('hidden'));
+
+  checkUnclaimedRewards();
 
   let state = null;
 
@@ -717,6 +874,7 @@
     const stars = starsForRound();
     coins += stars; // 1 coin per star, per spec's proposal
     recordRoundResult(true);
+    submitScore(stars);
 
     const wasAtLastTier = tierIndex >= TIERS.length - 1;
     tierWins++;

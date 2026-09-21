@@ -53,6 +53,7 @@
 
   <div class="controls">
     <button class="btn-primary" id="newRoundBtn">New round</button>
+    <button class="btn-secondary" id="leaderboardBtn">🏆 Leaderboard</button>
   </div>
 
   <div class="debug-panel">
@@ -79,6 +80,31 @@
         <button class="btn-primary" id="continueCoinBtn">Spend 1 🪙 to continue</button>
         <button class="btn-secondary" id="continueAdBtn">Watch ad to continue</button>
         <button class="btn-secondary" id="continueDeclineBtn">No thanks, reset round</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="leaderboardOverlay">
+    <div class="modal modal-wide">
+      <h2>Weekly Leaderboard</h2>
+      <p id="leaderboardWeekLabel"></p>
+      <p class="leaderboard-you">Playing as <strong id="leaderboardNicknameVal"></strong> · <button class="btn-link" id="leaderboardEditNicknameBtn">change</button></p>
+      <div class="leaderboard-list" id="leaderboardList"></div>
+      <p class="leaderboard-self hidden" id="leaderboardSelfRow"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="leaderboardCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="nicknameOverlay">
+    <div class="modal">
+      <h2>Pick a nickname</h2>
+      <p>Shown on the global leaderboard only — no account, no friends list, nothing else tied to you.</p>
+      <input type="text" id="nicknameInput" maxlength="20" placeholder="Your nickname" class="nickname-input">
+      <div class="modal-actions">
+        <button class="btn-primary" id="nicknameConfirmBtn">Save</button>
+        <button class="btn-secondary" id="nicknameSkipBtn">Cancel</button>
       </div>
     </div>
   </div>
