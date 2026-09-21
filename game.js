@@ -3,14 +3,22 @@
   const MAX_GRID = 8; // spec's brute-force-feasible ceiling; past this, generation needs a constraint solver instead
   const MAX_LIVES = 3;
 
-  // Difficulty ladder (product decision 2026-09-22): for each grid size, critter count ramps
-  // from 1 up to the grid size (the old "always equals grid size" rule is now just the top of
-  // each size's ramp), 3 wins per critter-count tier before advancing. 3+4+5+6+7+8 = 33 tiers,
-  // 99 wins to clear the whole ladder once - replaces the old 6-tier "1 win per grid size" scheme.
+  // Difficulty ladder (product decision 2026-09-22, revised 2026-09-23): critter count alone
+  // drives solving difficulty (masking/ties), not board size - spreading a low critter count
+  // over a bigger board makes critters farther apart and the puzzle *easier*, not harder. An
+  // earlier version ramped critter count 1..N at every grid size, which meant every new size
+  // reset straight back to trivial (1 critter on the biggest board yet) right after the hardest
+  // point of the previous size - an oscillating, not escalating, curve. Now each size only uses
+  // its top 3 critter counts (N-2, N-1, N, clamped at 1), so the density floor climbs every
+  // size (33% -> 50% -> 60% -> 67% -> 71% -> 75%) instead of crashing back down. 3+3+3+3+3+3 =
+  // 18 tiers, 3 wins each, 54 wins to clear the ladder once. Fewer tiers than the max-content
+  // version, on purpose - a smooth curve matters more than raw tier count, and there are other
+  // ways to extend play length later without reintroducing the reset.
   const TIER_WINS_REQUIRED = 3;
   const TIERS = [];
   for (let n = MIN_GRID; n <= MAX_GRID; n++) {
-    for (let c = 1; c <= n; c++) TIERS.push({ gridSize: n, critterCount: c });
+    const minCount = Math.max(1, n - 2);
+    for (let c = minCount; c <= n; c++) TIERS.push({ gridSize: n, critterCount: c });
   }
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
@@ -113,10 +121,17 @@
     }
   }
 
+  // Stores the tier as (gridSize, critterCount) rather than a raw index into TIERS - the tier
+  // list's order and contents have already changed twice during design iteration, and an index
+  // silently points at the wrong tier (or off the end of the array) the moment the list is
+  // reshuffled again. Storing the actual values makes reloading robust to future tier-list
+  // changes: it just looks up wherever that (gridSize, critterCount) pair lives now.
   function persistSave() {
     try {
+      const tier = currentTier();
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        version: 2, coins, streak, lastExtendDate, lastDecidedDate, tierIndex, tierWins,
+        version: 3, coins, streak, lastExtendDate, lastDecidedDate,
+        tierGridSize: tier.gridSize, tierCritterCount: tier.critterCount, tierWins,
         streakShieldArmed, lifeWardArmed,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
@@ -129,14 +144,20 @@
     if (typeof saved.streak === 'number') streak = saved.streak;
     if (typeof saved.lastExtendDate === 'string') lastExtendDate = saved.lastExtendDate;
     if (typeof saved.lastDecidedDate === 'string') lastDecidedDate = saved.lastDecidedDate;
-    // v1 saves only had "level" (one tier per grid size) - approximate by landing on that grid
-    // size's first (1-critter) tier rather than losing the progress entirely.
-    if (saved.version === 2 && typeof saved.tierIndex === 'number') {
-      tierIndex = saved.tierIndex;
-      tierWins = typeof saved.tierWins === 'number' ? saved.tierWins : 0;
+    if (saved.version === 3 && typeof saved.tierGridSize === 'number') {
+      let idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize && t.critterCount === saved.tierCritterCount);
+      if (idx < 0) idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize); // that exact count no longer exists at this size - land on the size's first tier instead
+      tierIndex = idx < 0 ? 0 : idx;
+      tierWins = idx < 0 ? 0 : (typeof saved.tierWins === 'number' ? saved.tierWins : 0);
+    } else if (saved.version === 2 && typeof saved.tierIndex === 'number') {
+      // Pre-v3 saves stored a raw index into an old, differently-shaped tier list - there's no
+      // way to recover exactly which (gridSize, critterCount) that meant, so just clamp it into
+      // range as a rough approximation rather than losing coins/streak entirely.
+      tierIndex = Math.max(0, Math.min(saved.tierIndex, TIERS.length - 1));
+      tierWins = 0;
     } else if (typeof saved.level === 'number') {
-      tierIndex = TIERS.findIndex(t => t.gridSize === MIN_GRID + saved.level && t.critterCount === 1);
-      if (tierIndex < 0) tierIndex = 0;
+      const idx = TIERS.findIndex(t => t.gridSize === MIN_GRID + saved.level);
+      tierIndex = idx < 0 ? 0 : idx;
     }
     streakShieldArmed = !!saved.streakShieldArmed;
     lifeWardArmed = !!saved.lifeWardArmed;
