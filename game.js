@@ -34,6 +34,8 @@
     toast: document.getElementById('toast'),
     level: document.getElementById('levelVal'),
     streak: document.getElementById('streakVal'),
+    debugAdvanceDayBtn: document.getElementById('debugAdvanceDayBtn'),
+    debugDateVal: document.getElementById('debugDateVal'),
   };
 
   let toastTimer = null;
@@ -73,8 +75,15 @@
 
   const SAVE_KEY = 'compassCritters.save.v1';
 
+  // Testing-only: lets QA advance the simulated "today" without touching the system clock, to
+  // exercise the streak logic's day-sequencing (consecutive days, gaps, shielded saves) without
+  // waiting for real calendar days. Not persisted - resets every reload. Strip the debug button
+  // (and this offset) out of the actual App Store build.
+  let debugDayOffset = 0;
+
   function todayDateString() {
     const d = new Date();
+    d.setDate(d.getDate() + debugDayOffset);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
@@ -757,5 +766,16 @@
   el.wardBtn.addEventListener('click', useWard);
   el.shieldBtn.addEventListener('click', useShield);
 
+  function updateDebugDateDisplay() {
+    el.debugDateVal.textContent = `Simulated date: ${todayDateString()}`;
+  }
+
+  el.debugAdvanceDayBtn.addEventListener('click', () => {
+    debugDayOffset++;
+    updateDebugDateDisplay();
+    showToast(`Debug: simulated date is now ${todayDateString()}`);
+  });
+
+  updateDebugDateDisplay();
   startRound();
 })();

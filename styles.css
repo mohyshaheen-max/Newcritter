@@ -227,6 +227,28 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .toast.visible { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 
+.debug-panel {
+  margin-top: 24px;
+  padding: 10px 14px;
+  border: 1px dashed var(--danger);
+  border-radius: 12px;
+  text-align: center;
+  max-width: 320px;
+}
+.debug-panel .debug-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--danger);
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.debug-panel #debugDateVal {
+  font-size: 0.75rem;
+  color: var(--fg-soft);
+  margin: 8px 0 0;
+}
+
 .overlay {
   position: fixed;
   inset: 0;
