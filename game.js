@@ -39,10 +39,15 @@
   const TIE = '✦';
   const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘']; // index i sits at i*45°, E through SE going counter-clockwise
   const ANIMALS = ['🐶', '🐱', '🦊', '🐰', '🐻', '🦝', '🐨', '🦔'];
-  const PULSE_COST = 3; // bumped from 2: on a 5x5 board a 3x3 scan can pin a 3-row block's columns almost exactly, stronger than a 1-coin Sniff
+  // Costs raised 2026-09-22 (economy tightening, tester feedback that coins were too generous -
+  // Sniff in particular was an "easy button" that could de-risk any tile for almost nothing):
+  // Sniff 1->2, Rewind 1->2, Ward 1->2, Decode 2->3. Pulse and Shield left as-is.
+  const SNIFF_COST = 2; // reveals a critter outright, no downside - was underpriced at 1
+  const REWIND_COST = 2;
+  const PULSE_COST = 3; // bumped from 2 previously: on a 5x5 board a 3x3 scan can pin a 3-row block's columns almost exactly, stronger than a 1-coin Sniff
   const PULSE_MIN_GRID = 5; // per product decision: unlocks at 5x5 and above
-  const DECODE_COST = 2;
-  const WARD_COST = 1; // insurance for one uncertain tap, often wasted on a safe tile - not worth Pulse/Decode's price, which both guarantee useful info
+  const DECODE_COST = 3;
+  const WARD_COST = 2; // insurance for one uncertain tap, often wasted on a safe tile - priced below Pulse/Decode, which both guarantee useful info regardless of outcome
 
   const el = {
     grid: document.getElementById('grid'),
@@ -147,18 +152,33 @@
   // is shown once, the same "seen" flag pattern as the power-ups intro above. endlessStreak
   // counts consecutive endless-mode wins and resets to 0 the moment a round there is lost
   // (Continue declined); bestEndlessStreak is a persisted high-water mark that never decreases.
+  //
+  // Two changes made 2026-09-22 after tester feedback of a "massive drop-off" once players
+  // reached Endless Mode - the existing tie-bias system was already maxed out the moment
+  // Endless Mode starts (it was already sampling the hardest available boards for the ladder's
+  // final tier), so there was no difficulty dial left to turn without a genuinely new mechanic:
+  //   1. endlessWinsTotal - a lifetime Endless Mode win counter that NEVER resets (unlike
+  //      endlessStreak). The theory: a streak that resets to 0 on every loss reads as punishing
+  //      on a board this hard, unlike the level counter that only ever climbed - this gives
+  //      Endless Mode a second number that keeps moving forward regardless of streak length.
+  //   2. currentMaxLives() - Endless Mode rounds use 2 lives instead of the normal 3, a genuine
+  //      new difficulty lever (raises the stakes of every tap) rather than trying to squeeze
+  //      more out of the already-maxed generation-side tie-bias.
   const ENDLESS_MODE_SEEN_KEY = 'compassCritters.endlessModeSeen.v1';
+  const ENDLESS_MODE_LIVES = 2;
   let pendingEndlessModeIntro = false;
   let endlessStreak = 0;
   let bestEndlessStreak = 0;
+  let endlessWinsTotal = 0;
   function shouldShowEndlessModeIntro() {
     try { return !localStorage.getItem(ENDLESS_MODE_SEEN_KEY); } catch (err) { return false; }
   }
   function markEndlessModeIntroSeen() {
     try { localStorage.setItem(ENDLESS_MODE_SEEN_KEY, '1'); } catch (err) { /* storage unavailable - will just show again next load */ }
   }
+  function currentMaxLives() { return isEndlessMode() ? ENDLESS_MODE_LIVES : MAX_LIVES; }
 
-  const STARTING_COINS = 5; // a small welcome balance for a brand new player; returning players load their real saved total
+  const STARTING_COINS = 3; // trimmed from 5 (economy tightening, 2026-09-22) - a brand new player should feel the cost of a power-up, not spend one for free; returning players load their real saved total
   let coins = STARTING_COINS;
 
   // Persisted so it survives round resets (that's the point of a streak shield) and reloads.
@@ -224,7 +244,7 @@
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         version: 3, coins, streak, lastExtendDate, lastDecidedDate,
         tierGridSize: tier.gridSize, tierCritterCount: tier.critterCount, tierWins,
-        streakShieldArmed, lifeWardArmed, totalWins, endlessStreak, bestEndlessStreak,
+        streakShieldArmed, lifeWardArmed, totalWins, endlessStreak, bestEndlessStreak, endlessWinsTotal,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
   }
@@ -239,6 +259,7 @@
     if (typeof saved.totalWins === 'number') totalWins = saved.totalWins;
     if (typeof saved.endlessStreak === 'number') endlessStreak = saved.endlessStreak;
     if (typeof saved.bestEndlessStreak === 'number') bestEndlessStreak = saved.bestEndlessStreak;
+    if (typeof saved.endlessWinsTotal === 'number') endlessWinsTotal = saved.endlessWinsTotal;
     if (saved.version === 3 && typeof saved.tierGridSize === 'number') {
       let idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize && t.critterCount === saved.tierCritterCount);
       if (idx < 0) idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize); // that exact count no longer exists at this size - land on the size's first tier instead
@@ -816,7 +837,7 @@
       grid: null,
       firstTapDone: false,
       cells: Array.from({ length: n }, () => Array.from({ length: n }, () => ({ status: 'hidden', flagged: false }))),
-      lives: MAX_LIVES,
+      lives: currentMaxLives(),
       revealed: 0,
       total: n * n - critterCount,
       roundOver: false,
@@ -827,7 +848,7 @@
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
     el.level.textContent = isEndlessMode()
-      ? `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters`
+      ? `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters`
       : `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
     updateStats();
     render();
@@ -963,7 +984,7 @@
   }
 
   function useSniff() {
-    if (state.roundOver || coins < 1) return;
+    if (state.roundOver || coins < SNIFF_COST) return;
     ensureBoardResolved();
     const hidden = [];
     for (let r = 0; r < state.n; r++) {
@@ -974,7 +995,7 @@
     }
     if (!hidden.length) return; // everything left is already flagged - nothing new to reveal
     const [r, c] = hidden[Math.floor(Math.random() * hidden.length)];
-    coins--;
+    coins -= SNIFF_COST;
     state.cells[r][c] = { status: 'critter', flagged: false };
     trackDailyQuestProgress('powerup', 1);
     updateStats();
@@ -983,9 +1004,9 @@
   }
 
   function useRewind() {
-    if (state.roundOver || coins < 1 || !state.history.length) return;
+    if (state.roundOver || coins < REWIND_COST || !state.history.length) return;
     const last = state.history.pop();
-    coins--;
+    coins -= REWIND_COST;
     state.cells[last.r][last.c] = { status: 'hidden', flagged: false };
     state.lives = last.lives;
     state.revealed = last.revealed;
@@ -1131,6 +1152,7 @@
     const wasAtLastTier = isEndlessMode();
     if (wasAtLastTier) {
       endlessStreak++;
+      endlessWinsTotal++;
       if (endlessStreak > bestEndlessStreak) bestEndlessStreak = endlessStreak;
     }
     tierWins++;
@@ -1159,9 +1181,9 @@
       // top for why the two are deliberately decoupled. Once in Endless Mode, the level counter
       // no longer applies - the win streak is the score there instead.
       const progressText = wasAtLastTier
-        ? `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak})`
+        ? `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins`
         : `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
-      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${MAX_LIVES}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
+      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${currentMaxLives()}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
       el.winOverlay.classList.remove('hidden');
     }, 300);
   }
@@ -1248,11 +1270,13 @@
   }
 
   function updateStats() {
-    el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(MAX_LIVES - state.lives);
+    el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(currentMaxLives() - state.lives);
     el.coins.textContent = coins;
     el.found.textContent = state.revealed;
-    el.sniffBtn.disabled = state.roundOver || coins < 1 || !hasSniffableCritters();
-    el.rewindBtn.disabled = state.roundOver || coins < 1 || !state.history.length;
+    el.sniffBtn.disabled = state.roundOver || coins < SNIFF_COST || !hasSniffableCritters();
+    el.sniffBtn.textContent = `Sniff · ${SNIFF_COST} 🪙`;
+    el.rewindBtn.disabled = state.roundOver || coins < REWIND_COST || !state.history.length;
+    el.rewindBtn.textContent = `Rewind · ${REWIND_COST} 🪙`;
 
     const pulseUnlocked = state.n >= PULSE_MIN_GRID;
     el.pulseBtn.style.display = pulseUnlocked ? '' : 'none';
@@ -1428,7 +1452,7 @@
   // note on endless replay needing its own incentives).
   function milestoneForWinCount(n) {
     if (n === 1) return { title: 'First Win!', reward: 3 };
-    if (n % 5 === 0) return { title: `${n} Wins!`, reward: 5 };
+    if (n % 5 === 0) return { title: `${n} Wins!`, reward: 3 };
     return null;
   }
 
@@ -1456,14 +1480,14 @@
   // hooks scattered through tapCell/winRound/toggleFlag/the power-up functions never need to
   // know which quests happen to be active - only rendering and the completion bonus care.
   const DAILY_QUEST_POOL = [
-    { id: 'wins', label: 'Win 2 rounds', target: 2, reward: 2 },
-    { id: 'tiles', label: 'Reveal 30 tiles', target: 30, reward: 2 },
-    { id: 'powerup', label: 'Use a power-up', target: 1, reward: 2 },
-    { id: 'flawless', label: 'Win a round without losing a life', target: 1, reward: 3 },
-    { id: 'flag', label: 'Correctly flag a critter', target: 1, reward: 2 },
+    { id: 'wins', label: 'Win 2 rounds', target: 2, reward: 1 },
+    { id: 'tiles', label: 'Reveal 30 tiles', target: 30, reward: 1 },
+    { id: 'powerup', label: 'Use a power-up', target: 1, reward: 1 },
+    { id: 'flawless', label: 'Win a round without losing a life', target: 1, reward: 2 },
+    { id: 'flag', label: 'Correctly flag a critter', target: 1, reward: 1 },
   ];
   const DAILY_QUEST_ACTIVE_COUNT = 3;
-  const DAILY_QUEST_BONUS = 3;
+  const DAILY_QUEST_BONUS = 2;
 
   // Small seeded PRNG (mulberry32) so the day's 3 quests are a deterministic function of the
   // date string - same 3 shown on every reload of the same day, a (likely) different 3 the next
@@ -1625,7 +1649,7 @@
     state, tierIndex, tierWins, TIERS, streak, coins,
     streakShieldArmed, lifeWardArmed, lastExtendDate, lastDecidedDate,
     tutorialActive, tutorialStep, totalWins, dailyQuests, pendingMilestone,
-    endlessStreak, bestEndlessStreak, pendingEndlessModeIntro, isEndlessMode: isEndlessMode(),
+    endlessStreak, bestEndlessStreak, endlessWinsTotal, pendingEndlessModeIntro, isEndlessMode: isEndlessMode(),
   });
 
   // --- Onboarding tutorial (2026-09-21, expanded same day per feedback the first cut was too
