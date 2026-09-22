@@ -1469,12 +1469,36 @@
     }
   }
 
-  // Rotation Tiers only - a single tappable rotation icon above the board, showing the whole
-  // board's fixed rotation as a rotated arrow (tappable - see the click handler below - since the
-  // icon alone doesn't communicate anything on its own). No count/swatch of any kind - that was
-  // Region Tiers (colored zones), scrapped 2026-09-22 (see the ROTATION_TIERS comment up top).
-  // Fixed for the whole round, so this only needs to run once per startRound(), not on every
-  // state change.
+  // A real compass face (fixed "N" mark + 8 rim ticks, one per possible rotation step) with a
+  // needle pointing off true by the round's rotation - reads as "the needle is off calibration by
+  // this much" instead of a bare rotated arrow, which testers found didn't read as a *shift* on
+  // its own. Ticks/N use the SVG's own `rotate(deg cx cy)` transform attribute (not CSS transform)
+  // so the pivot point is unambiguous regardless of how the SVG is scaled by its container.
+  function compassFaceSvg(rotationDeg) {
+    let ticks = '';
+    for (let i = 0; i < 8; i++) {
+      ticks += `<line class="compass-tick" x1="20" y1="3" x2="20" y2="6" transform="rotate(${i * 45} 20 20)"/>`;
+    }
+    // Fixed reference wedge at the top (always "true", regardless of the round's rotation) - kept
+    // clear of the needle's sweep (which stops at y=11) so the two never overlap, including when
+    // the round's rotation happens to be 0 and the needle points straight at it.
+    return `
+      <svg class="compass-face" viewBox="0 0 40 40">
+        ${ticks}
+        <polygon class="compass-mark-n" points="20,1 17,6 23,6"/>
+        <g class="compass-needle" transform="rotate(${rotationDeg} 20 20)">
+          <line class="compass-needle-line" x1="20" y1="20" x2="20" y2="11"/>
+          <polygon class="compass-needle-head" points="20,7 16,13 24,13"/>
+          <circle class="compass-needle-hub" cx="20" cy="20" r="2.5"/>
+        </g>
+      </svg>`;
+  }
+
+  // Rotation Tiers only - a single tappable compass icon above the board, showing the whole
+  // board's fixed rotation for the round (tappable - see the click handler below - since the icon
+  // alone doesn't communicate anything on its own). No count/swatch of any kind - that was Region
+  // Tiers (colored zones), scrapped 2026-09-22 (see the ROTATION_TIERS comment up top). Fixed for
+  // the whole round, so this only needs to run once per startRound(), not on every state change.
   function renderRotationIcon() {
     if (state.rotationSteps == null) {
       el.regionLegend.classList.add('hidden');
@@ -1482,7 +1506,7 @@
       return;
     }
     el.regionLegend.classList.remove('hidden');
-    el.regionLegend.innerHTML = `<span class="region-rotation" style="transform: rotate(${state.rotationSteps * 45}deg)">↑</span>`;
+    el.regionLegend.innerHTML = `<span class="region-rotation">${compassFaceSvg(state.rotationSteps * 45)}</span>`;
   }
 
   // wedgeIndex counts counter-clockwise from East (see the ARROWS comment up top), but CSS
