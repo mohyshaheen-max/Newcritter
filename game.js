@@ -909,6 +909,7 @@
     const cell = state.cells[r][c];
     if (cell.status !== 'hidden') return;
     cell.flagged = !cell.flagged;
+    if (cell.flagged && state.perm[r] === c) trackDailyQuestProgress('flag', 1);
     if (cell.flagged && allCrittersFlaggedCorrectly()) {
       autoCompleteRound();
       return;
@@ -1114,6 +1115,7 @@
 
     totalWins++;
     trackDailyQuestProgress('wins', 1);
+    if (stars === 3) trackDailyQuestProgress('flawless', 1); // 3 lives kept - no life lost all round
     const milestone = milestoneForWinCount(totalWins);
     if (milestone) {
       coins += milestone.reward;
@@ -1441,27 +1443,72 @@
   });
 
   const DAILY_QUESTS_KEY = 'compassCritters.dailyQuests.v1';
-  const DAILY_QUEST_DEFS = [
+  // A pool of 5 possible objectives - 3 are picked deterministically each day (see
+  // selectDailyQuestIds) rather than always showing the same fixed set. progress/claimed are
+  // tracked for every pool entry regardless of whether it's one of today's 3, so the tracking
+  // hooks scattered through tapCell/winRound/toggleFlag/the power-up functions never need to
+  // know which quests happen to be active - only rendering and the completion bonus care.
+  const DAILY_QUEST_POOL = [
     { id: 'wins', label: 'Win 2 rounds', target: 2, reward: 2 },
     { id: 'tiles', label: 'Reveal 30 tiles', target: 30, reward: 2 },
     { id: 'powerup', label: 'Use a power-up', target: 1, reward: 2 },
+    { id: 'flawless', label: 'Win a round without losing a life', target: 1, reward: 3 },
+    { id: 'flag', label: 'Correctly flag a critter', target: 1, reward: 2 },
   ];
+  const DAILY_QUEST_ACTIVE_COUNT = 3;
   const DAILY_QUEST_BONUS = 3;
 
-  let dailyQuests = { date: null, progress: { wins: 0, tiles: 0, powerup: 0 }, claimed: { wins: false, tiles: false, powerup: false, bonus: false } };
+  // Small seeded PRNG (mulberry32) so the day's 3 quests are a deterministic function of the
+  // date string - same 3 shown on every reload of the same day, a (likely) different 3 the next
+  // day, no server round-trip needed. hashStringToSeed turns the date into a 32-bit seed.
+  function hashStringToSeed(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+    return h >>> 0;
+  }
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function selectDailyQuestIds(dateStr) {
+    const rng = mulberry32(hashStringToSeed(dateStr + '.dailyquests'));
+    const ids = DAILY_QUEST_POOL.map(q => q.id);
+    for (let i = ids.length - 1; i > 0; i--) { // seeded Fisher-Yates
+      const j = Math.floor(rng() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    return ids.slice(0, DAILY_QUEST_ACTIVE_COUNT);
+  }
+  function todaysQuestIds() { return selectDailyQuestIds(dailyQuests.date); }
+
+  let dailyQuests = { date: null, progress: {}, claimed: {} };
 
   function persistDailyQuests() {
     try { localStorage.setItem(DAILY_QUESTS_KEY, JSON.stringify(dailyQuests)); } catch (err) { /* storage unavailable - progress just won't survive a reload */ }
   }
 
-  // Resets the whole quest set the moment todayDateString() rolls over - called defensively
-  // before every read/write below rather than just once at load, since a session can stay open
-  // across a real midnight (or a debug day-advance) without a reload in between.
+  // Resets progress the moment todayDateString() rolls over, and backfills any pool entries
+  // missing from progress/claimed either way - covers a brand-new day AND loading a save from
+  // before the pool was expanded past its original 3, without wiping same-day progress in the
+  // latter case. Called defensively before every read/write below (not just once at load) since
+  // a session can stay open across a real midnight, or a debug day-advance, without a reload.
   function ensureDailyQuestsForToday() {
     const today = todayDateString();
-    if (dailyQuests.date === today) return;
-    dailyQuests = { date: today, progress: { wins: 0, tiles: 0, powerup: 0 }, claimed: { wins: false, tiles: false, powerup: false, bonus: false } };
-    persistDailyQuests();
+    let changed = false;
+    if (dailyQuests.date !== today) {
+      dailyQuests = { date: today, progress: {}, claimed: {} };
+      changed = true;
+    }
+    DAILY_QUEST_POOL.forEach((q) => {
+      if (!(q.id in dailyQuests.progress)) { dailyQuests.progress[q.id] = 0; changed = true; }
+      if (!(q.id in dailyQuests.claimed)) { dailyQuests.claimed[q.id] = false; changed = true; }
+    });
+    if (!('bonus' in dailyQuests.claimed)) { dailyQuests.claimed.bonus = false; changed = true; }
+    if (changed) persistDailyQuests();
   }
 
   (function loadDailyQuests() {
@@ -1474,30 +1521,35 @@
   })();
 
   function allDailyQuestsClaimed() {
-    return DAILY_QUEST_DEFS.every(d => dailyQuests.claimed[d.id]);
+    return todaysQuestIds().every(id => dailyQuests.claimed[id]);
   }
 
   function updateDailyQuestsBadge() {
     ensureDailyQuestsForToday();
-    const claimableCount = DAILY_QUEST_DEFS.filter(d => !dailyQuests.claimed[d.id] && dailyQuests.progress[d.id] >= d.target).length
-      + (allDailyQuestsClaimed() && !dailyQuests.claimed.bonus ? 1 : 0);
+    const activeIds = todaysQuestIds();
+    const claimableCount = activeIds.filter((id) => {
+      const def = DAILY_QUEST_POOL.find(q => q.id === id);
+      return !dailyQuests.claimed[id] && dailyQuests.progress[id] >= def.target;
+    }).length + (allDailyQuestsClaimed() && !dailyQuests.claimed.bonus ? 1 : 0);
     el.dailyQuestsBtn.textContent = claimableCount > 0 ? `📅 Daily Quests (${claimableCount})` : '📅 Daily Quests';
   }
 
-  // Tracks progress toward whichever quest `id` corresponds to; stops accumulating past a
-  // quest's target (and once claimed) since nothing reads the excess.
+  // Tracks progress toward whichever pool entry `id` corresponds to, active today or not (see
+  // the pool comment above). Stops accumulating past that entry's target (and once claimed)
+  // since nothing reads the excess.
   function trackDailyQuestProgress(id, amount) {
     ensureDailyQuestsForToday();
-    const def = DAILY_QUEST_DEFS.find(d => d.id === id);
+    const def = DAILY_QUEST_POOL.find(d => d.id === id);
     if (!def || dailyQuests.claimed[id]) return;
-    dailyQuests.progress[id] = Math.min(def.target, dailyQuests.progress[id] + amount);
+    dailyQuests.progress[id] = Math.min(def.target, (dailyQuests.progress[id] || 0) + amount);
     persistDailyQuests();
     updateDailyQuestsBadge();
   }
 
   function renderDailyQuests() {
     ensureDailyQuestsForToday();
-    el.dailyQuestsList.innerHTML = DAILY_QUEST_DEFS.map((d) => {
+    const activeQuests = todaysQuestIds().map(id => DAILY_QUEST_POOL.find(q => q.id === id));
+    el.dailyQuestsList.innerHTML = activeQuests.map((d) => {
       const progress = dailyQuests.progress[d.id];
       const claimed = dailyQuests.claimed[d.id];
       const complete = progress >= d.target;
@@ -1513,7 +1565,7 @@
     }).join('') + `
       <div class="quest-row quest-bonus-row">
         <div class="quest-info">
-          <p class="quest-label">🎁 Complete all 3</p>
+          <p class="quest-label">🎁 Complete all ${DAILY_QUEST_ACTIVE_COUNT}</p>
           <p class="quest-progress">Bonus</p>
         </div>
         <button class="btn-secondary quest-claim-btn" id="dailyQuestBonusBtn" ${dailyQuests.claimed.bonus || !allDailyQuestsClaimed() ? 'disabled' : ''}>${dailyQuests.claimed.bonus ? 'Claimed' : `+${DAILY_QUEST_BONUS} 🪙`}</button>
@@ -1527,7 +1579,7 @@
   }
 
   function claimDailyQuest(id) {
-    const def = DAILY_QUEST_DEFS.find(d => d.id === id);
+    const def = DAILY_QUEST_POOL.find(d => d.id === id);
     if (!def || dailyQuests.claimed[id] || dailyQuests.progress[id] < def.target) return;
     dailyQuests.claimed[id] = true;
     coins += def.reward;
