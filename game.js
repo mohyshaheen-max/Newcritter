@@ -1762,17 +1762,77 @@
     }).join('');
   }
 
-  // Rotating Compass only - tapping a region's rotation icon re-explains the rule, since the icon
-  // alone doesn't communicate anything on its own (the whole reason this exists - see chat).
+  // wedgeIndex counts counter-clockwise from East (see the ARROWS comment up top), but CSS
+  // rotate() is clockwise-positive - negating converts between the two conventions. Used only by
+  // previewRegionRotation()'s animation; the normal (non-preview) rendering never needs this,
+  // since rotateGlyph() stays entirely in array-index space and never touches CSS degrees.
+  function wedgeIndexToCssDeg(wedgeIndex) {
+    return -wedgeIndex * 45;
+  }
+
+  // Picks the equivalent representation of `toDeg` (some multiple of 360 added/subtracted) that's
+  // within 180° of `fromDeg`, so a CSS transition always takes the short way around instead of
+  // occasionally sweeping the long way because the raw numbers happen to straddle 0deg/360deg.
+  function shortestEquivalentDeg(fromDeg, toDeg) {
+    const diff = ((toDeg - fromDeg + 540) % 360) - 180;
+    return fromDeg + diff;
+  }
+
+  // Rotating Compass only (2026-09-22, replacing the degree-number toast this started with -
+  // testing found "rotated 90°, subtract that yourself" too abstract to actually use). Tapping a
+  // region's rotation icon spins every currently-revealed arrow in that region from its displayed
+  // direction to its true one, holds briefly, then spins back - a direct visual answer instead of
+  // mental arithmetic. Deliberately temporary, not a toggle: a permanent per-region reveal would
+  // let a player neutralize the whole mechanic in a few taps at the start of a round, which
+  // defeats the point of it being a difficulty layer at all (see the chat discussion this came
+  // from). Purely cosmetic - nothing in `state` changes, so it's safe to interrupt: manipulates
+  // the DOM cells render() already drew directly (not through render() itself, which does a full
+  // grid rebuild that would kill an in-flight CSS transition), and if any other action calls
+  // render() mid-preview, that just wipes the animation and redraws normally, as if it never
+  // happened.
+  function previewRegionRotation(regionId) {
+    if (!state.regionOf || !state.regionRotation) return;
+    const steps = state.regionRotation[regionId];
+    const cellEls = el.grid.children;
+    const animated = [];
+    for (let r = 0; r < state.n; r++) {
+      for (let c = 0; c < state.n; c++) {
+        if (state.regionOf[r][c] !== regionId) continue;
+        const cell = state.cells[r][c];
+        if (cell.status !== 'revealed' || cell.decodedWedges) continue;
+        const glyph = state.grid[r][c];
+        if (glyph === TIE) continue; // not directional - nothing to preview
+        const trueIdx = ARROWS.indexOf(glyph);
+        if (trueIdx < 0) continue;
+        const displayedIdx = (trueIdx + steps) % 8;
+        const div = cellEls[r * state.n + c];
+        if (!div) continue;
+        const fromDeg = wedgeIndexToCssDeg(displayedIdx);
+        const toDeg = shortestEquivalentDeg(fromDeg, wedgeIndexToCssDeg(trueIdx));
+        div.textContent = '→'; // single base glyph, rotated via transform instead of swapping characters
+        div.style.transition = 'none';
+        div.style.transform = `rotate(${fromDeg}deg)`;
+        void div.offsetWidth; // forces layout so the browser registers the start angle before animating
+        div.style.transition = 'transform 0.5s ease';
+        div.style.transform = `rotate(${toDeg}deg)`;
+        animated.push({ div, fromDeg });
+      }
+    }
+    if (!animated.length) {
+      showToast('Nothing revealed in this region yet to preview.');
+      return;
+    }
+    showToast('🧭 Showing true directions for this region…');
+    setTimeout(() => {
+      animated.forEach(({ div, fromDeg }) => { div.style.transform = `rotate(${fromDeg}deg)`; });
+      setTimeout(render, 550); // let the spin-back finish, then let the next render() restore normal glyphs
+    }, 1600);
+  }
+
   el.regionLegend.addEventListener('click', (e) => {
     const icon = e.target.closest('.region-rotation');
     if (!icon || !state.regionRotation) return;
-    const id = Number(icon.dataset.regionId);
-    const steps = state.regionRotation[id];
-    const degrees = steps * 45;
-    showToast(degrees === 0
-      ? `🧭 This region's compass is TRUE - arrows here point the real direction, no adjustment needed.`
-      : `🧭 This region's compass is rotated ${degrees}°. Arrows here are offset - rotate what you see backward by ${degrees}° to find the real direction.`);
+    previewRegionRotation(Number(icon.dataset.regionId));
   });
 
   el.newRoundBtn.addEventListener('click', () => {
