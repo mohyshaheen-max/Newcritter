@@ -30,6 +30,37 @@
     for (let c = minCount; c <= n; c++) TIERS.push({ gridSize: n, critterCount: c });
   }
   const TOTAL_LEVELS = TIERS.length * TIER_WINS_REQUIRED;
+
+  // --- Region Tiers (2026-09-22): the actual answer to "the ladder is boring past level 36" ---
+  // Bigger grids/more critters can't fix that on their own - TIERS' own top step (8x8, 8
+  // critters) is already a full permutation (one critter per row AND column), the densest board
+  // this placement model can produce; there's no "harder" left inside that one mechanic. Region
+  // Tiers is a genuinely different puzzle layered on top, not more of the same: the board is
+  // split into colored regions, each showing exactly how many critters it contains - a second,
+  // independent clue (a count, not a direction) the player cross-references against the arrow/
+  // tie clues. Reuses the identical (gridSize, critterCount) generation pipeline as the classic
+  // ladder - same placement model, same uniqueness check, same tie-bias - so there's no new
+  // generation-performance risk; region partitioning and region-count derivation are the only
+  // new pieces. A small pilot (4 tiers) rather than a full new ladder, to prove the mechanic
+  // generates well and is fun before investing in more - see buildRegionRoundSetup below for
+  // how region counts stay knowable before the first tap despite the free first-tap-safety
+  // guarantee (perm isn't otherwise chosen until then).
+  const REGION_TIERS = [
+    { gridSize: 8, critterCount: 6, regionCount: 5 },
+    { gridSize: 8, critterCount: 7, regionCount: 4 },
+    { gridSize: 8, critterCount: 8, regionCount: 4 },
+    { gridSize: 8, critterCount: 8, regionCount: 3 },
+  ];
+  // Low-opacity tints applied per-cell via box-shadow (see render()) so region boundaries show
+  // through whatever the cell's normal hidden/revealed/flagged background already is, without
+  // fighting that CSS. One per REGION_TIERS' largest regionCount.
+  const REGION_COLORS = [
+    'rgba(220, 80, 80, 0.22)',
+    'rgba(70, 130, 220, 0.22)',
+    'rgba(90, 180, 90, 0.22)',
+    'rgba(230, 170, 40, 0.22)',
+    'rgba(160, 90, 200, 0.22)',
+  ];
   // The round-within-the-whole-ladder number (1-based) currently being played, per the split
   // explained above: every difficulty step spans TIER_WINS_REQUIRED consecutive level numbers.
   // Capped at TOTAL_LEVELS - once the last difficulty step is reached, tierWins keeps counting
@@ -115,6 +146,7 @@
     milestoneCloseBtn: document.getElementById('milestoneCloseBtn'),
     endlessModeIntroOverlay: document.getElementById('endlessModeIntroOverlay'),
     endlessModeIntroCloseBtn: document.getElementById('endlessModeIntroCloseBtn'),
+    regionLegend: document.getElementById('regionLegend'),
   };
 
   let toastTimer = null;
@@ -129,10 +161,24 @@
   // advancing); no demotion on a loss. Both persisted, since it's overall progress.
   let tierIndex = 0;
   let tierWins = 0;
-  function currentTier() { return TIERS[Math.min(tierIndex, TIERS.length - 1)]; }
+  // Same pattern as tierIndex/tierWins, but for Region Tiers - only ever advances once
+  // isEndlessMode() is true (the classic ladder is maxed out). Stops advancing once it reaches
+  // REGION_TIERS' last entry (mirrors how tierIndex itself stops at TIERS.length - 1) - that
+  // last tier then just repeats indefinitely as the new Endless Mode.
+  let regionTierIndex = 0;
+  let regionTierWins = 0;
+  function currentTier() {
+    return isEndlessMode()
+      ? REGION_TIERS[Math.min(regionTierIndex, REGION_TIERS.length - 1)]
+      : TIERS[Math.min(tierIndex, TIERS.length - 1)];
+  }
   // True once the ladder's last difficulty step is reached - there's nothing left to advance
-  // to, so every subsequent round replays 8x8/8-critters as Endless Mode (see below).
+  // to in TIERS, so every subsequent round is a Region Tier instead (see below), and once those
+  // are exhausted too, the last one repeats indefinitely as Endless Mode.
   function isEndlessMode() { return tierIndex >= TIERS.length - 1; }
+  // True only while there's still a next Region Tier left to unlock - distinguishes "climbing
+  // the region ladder" from "fully unlocked, now just repeating the hardest one" for display text.
+  function regionTiersUnlocking() { return isEndlessMode() && regionTierIndex < REGION_TIERS.length - 1; }
 
   // Power-ups intro: shown once, the first time a player clears a tier (see winRound). Set when
   // that happens and consumed by the win overlay's "Next round" handler, which shows the intro
@@ -240,11 +286,19 @@
   // changes: it just looks up wherever that (gridSize, critterCount) pair lives now.
   function persistSave() {
     try {
-      const tier = currentTier();
+      // Deliberately NOT currentTier() here: several REGION_TIERS entries reuse the exact same
+      // (gridSize, critterCount) pair as an *earlier* TIERS entry (8x8/6 and 8x8/7 both already
+      // exist partway up the classic ladder), so saving whatever's currently displayed would
+      // make loadFromSave()'s lookup below land on that earlier TIERS index instead of the
+      // ladder's actual last one - silently demoting a Region Tier player out of Endless Mode on
+      // reload. This always saves the *classic* tier position (pinned at the ladder's end once
+      // isEndlessMode() is true), independent of which REGION_TIERS entry is on screen.
+      const classicTier = TIERS[Math.min(tierIndex, TIERS.length - 1)];
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         version: 3, coins, streak, lastExtendDate, lastDecidedDate,
-        tierGridSize: tier.gridSize, tierCritterCount: tier.critterCount, tierWins,
+        tierGridSize: classicTier.gridSize, tierCritterCount: classicTier.critterCount, tierWins,
         streakShieldArmed, lifeWardArmed, totalWins, endlessStreak, bestEndlessStreak, endlessWinsTotal,
+        regionTierIndex, regionTierWins,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
   }
@@ -260,6 +314,8 @@
     if (typeof saved.endlessStreak === 'number') endlessStreak = saved.endlessStreak;
     if (typeof saved.bestEndlessStreak === 'number') bestEndlessStreak = saved.bestEndlessStreak;
     if (typeof saved.endlessWinsTotal === 'number') endlessWinsTotal = saved.endlessWinsTotal;
+    if (typeof saved.regionTierIndex === 'number') regionTierIndex = Math.max(0, Math.min(saved.regionTierIndex, REGION_TIERS.length - 1));
+    if (typeof saved.regionTierWins === 'number') regionTierWins = saved.regionTierWins;
     if (saved.version === 3 && typeof saved.tierGridSize === 'number') {
       let idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize && t.critterCount === saved.tierCritterCount);
       if (idx < 0) idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize); // that exact count no longer exists at this size - land on the size's first tier instead
@@ -801,8 +857,8 @@
     return sorted.slice(start, start + windowSize).map(w => w.entry);
   }
 
-  function buildUniqueSolutionPool(n, c) {
-    const allPerms = getPlacementSpace(n, c);
+  function buildUniqueSolutionPool(n, c, candidateSpace) {
+    const allPerms = candidateSpace || getPlacementSpace(n, c);
     const poolTarget = Math.min(30, allPerms.length);
     const maxAttempts = poolTarget * 40;
     const pool = [];
@@ -815,6 +871,11 @@
       tried.add(idx);
       const perm = allPerms[idx];
       const grid = computeClueGrid(perm, n);
+      // allPerms is the comparison universe uniqueness is checked against - passing a Region
+      // Tier's region-count-filtered subset here (see buildRegionRoundSetup) means a candidate
+      // only needs to be distinguishable from OTHER placements sharing the same region counts,
+      // which is exactly correct: a placement with different region counts is already
+      // distinguishable via that clue alone, so it doesn't belong in the comparison at all.
       if (hasUniqueSolution(perm, grid, allPerms, n)) pool.push({ perm, grid });
     }
     if (!pool.length) {
@@ -824,16 +885,101 @@
     return biasPoolByTier(pool);
   }
 
+  // Randomized territory-growth partition: seed `regionCount` cells, then round-robin each
+  // region claiming a random unclaimed neighbor until the whole board is covered. Not a
+  // rigorously balanced partition (some regions end up bigger than others), which is fine here -
+  // region *shape* carries no gameplay meaning, only each region's final critter count does.
+  function partitionIntoRegions(n, regionCount) {
+    const regionOf = Array.from({ length: n }, () => Array(n).fill(null));
+    const frontier = Array.from({ length: regionCount }, () => []);
+    const allCells = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) allCells.push([r, c]);
+    shuffledIndices(allCells.length).slice(0, regionCount).forEach((cellIdx, regionId) => {
+      const [r, c] = allCells[cellIdx];
+      regionOf[r][c] = regionId;
+      frontier[regionId].push([r, c]);
+    });
+    let remaining = n * n - regionCount;
+    let stalled = false;
+    while (remaining > 0 && !stalled) {
+      stalled = true;
+      for (let regionId = 0; regionId < regionCount && remaining > 0; regionId++) {
+        const f = frontier[regionId];
+        while (f.length) {
+          const idx = Math.floor(Math.random() * f.length);
+          const [r, c] = f[idx];
+          const neighbors = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
+            .filter(([nr, nc]) => nr >= 0 && nr < n && nc >= 0 && nc < n && regionOf[nr][nc] === null);
+          if (!neighbors.length) { f.splice(idx, 1); continue; }
+          const [nr, nc] = neighbors[Math.floor(Math.random() * neighbors.length)];
+          regionOf[nr][nc] = regionId;
+          frontier[regionId].push([nr, nc]);
+          remaining--;
+          stalled = false;
+          break;
+        }
+      }
+    }
+    // A region can stall out (its frontier fully exhausted) before the whole board is claimed if
+    // it gets walled in by faster-growing neighbors - rare with 3-5 regions on an 8x8 board, but
+    // any leftover cells just join whichever already-claimed region borders them.
+    if (remaining > 0) {
+      for (let r = 0; r < n; r++) {
+        for (let c = 0; c < n; c++) {
+          if (regionOf[r][c] !== null) continue;
+          const neighborRegion = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
+            .map(([nr, nc]) => (nr >= 0 && nr < n && nc >= 0 && nc < n) ? regionOf[nr][nc] : null)
+            .find(id => id !== null);
+          regionOf[r][c] = neighborRegion != null ? neighborRegion : 0;
+        }
+      }
+    }
+    return regionOf;
+  }
+
+  function regionCountsFor(perm, regionOf, regionCount) {
+    const counts = Array(regionCount).fill(0);
+    perm.forEach((col, row) => { if (col !== null) counts[regionOf[row][col]]++; });
+    return counts;
+  }
+
+  // Region counts need to be knowable and shown from the moment the round starts (like any
+  // upfront puzzle clue - they don't get discovered progressively the way arrows do), but which
+  // exact placement the round uses isn't chosen until the first tap (see resolveFirstTap - kept
+  // that way so the free first-tap-safety guarantee still holds for Region Tiers too). Resolved
+  // by fixing the region-count vector first, from one random valid placement, then restricting
+  // the whole candidate pool resolveFirstTap() later draws from to placements matching that
+  // exact vector - so whichever candidate ends up chosen, the counts shown upfront are already
+  // correct for it. On the rare board where no vector has enough matching candidates after a few
+  // tries, falls back to the unfiltered space - the round still works, it just can't show counts
+  // until after the first tap that round.
+  function buildRegionRoundSetup(n, critterCount, regionCount) {
+    const regionOf = partitionIntoRegions(n, regionCount);
+    const allPerms = getPlacementSpace(n, critterCount);
+    const poolTarget = Math.min(30, allPerms.length);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const seed = allPerms[Math.floor(Math.random() * allPerms.length)];
+      const targetCounts = regionCountsFor(seed, regionOf, regionCount);
+      const key = targetCounts.join(',');
+      const matching = allPerms.filter(perm => regionCountsFor(perm, regionOf, regionCount).join(',') === key);
+      if (matching.length >= Math.min(5, poolTarget)) {
+        return { regionOf, regionCounts: targetCounts, candidateSpace: matching };
+      }
+    }
+    return { regionOf, regionCounts: null, candidateSpace: allPerms };
+  }
+
   function startRound() {
     commitPendingQuestProgress();
     const tier = currentTier();
     const n = tier.gridSize;
     const critterCount = tier.critterCount;
     document.documentElement.style.setProperty('--grid-size', n);
+    const regionSetup = tier.regionCount ? buildRegionRoundSetup(n, critterCount, tier.regionCount) : null;
     state = {
       n,
       critterCount,
-      pool: buildUniqueSolutionPool(n, critterCount),
+      pool: regionSetup ? buildUniqueSolutionPool(n, critterCount, regionSetup.candidateSpace) : buildUniqueSolutionPool(n, critterCount),
       perm: null,
       grid: null,
       firstTapDone: false,
@@ -845,12 +991,18 @@
       history: [],
       pulseArmed: false,
       decodeArmed: false,
+      regionOf: regionSetup ? regionSetup.regionOf : null,
+      regionCounts: regionSetup ? regionSetup.regionCounts : null,
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
-    el.level.textContent = isEndlessMode()
-      ? `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters`
-      : `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`;
+    const regionSuffix = tier.regionCount ? `, ${tier.regionCount} regions` : '';
+    el.level.textContent = !isEndlessMode()
+      ? `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`
+      : regionTiersUnlocking()
+        ? `🧩 Region Tier ${regionTierIndex + 1}/${REGION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters${regionSuffix}`
+        : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters${regionSuffix}`;
+    renderRegionLegend();
     updateStats();
     render();
   }
@@ -858,9 +1010,17 @@
   function resolveFirstTap(r, c) {
     let candidates = state.pool.filter(({ perm }) => perm[r] !== c);
     if (!candidates.length) {
-      candidates = getPlacementSpace(state.n, state.critterCount)
-        .filter(p => p[r] !== c)
-        .map(p => ({ perm: p, grid: computeClueGrid(p, state.n) }));
+      let space = getPlacementSpace(state.n, state.critterCount).filter(p => p[r] !== c);
+      // In a Region Tier, prefer whatever survives that also still matches the region counts
+      // already shown to the player (see buildRegionRoundSetup) - only fall through to a
+      // genuinely unfiltered pick if literally nothing satisfies both, which would mean the
+      // displayed counts can't be honored no matter what.
+      if (state.regionOf && state.regionCounts) {
+        const key = state.regionCounts.join(',');
+        const stillMatching = space.filter(p => regionCountsFor(p, state.regionOf, state.regionCounts.length).join(',') === key);
+        if (stillMatching.length) space = stillMatching;
+      }
+      candidates = space.map(p => ({ perm: p, grid: computeClueGrid(p, state.n) }));
     }
     const choice = candidates[Math.floor(Math.random() * candidates.length)];
     state.perm = choice.perm;
@@ -1151,10 +1311,21 @@
     }
 
     const wasAtLastTier = isEndlessMode();
+    const wasUnlockingRegionTier = regionTiersUnlocking();
     if (wasAtLastTier) {
       endlessStreak++;
       endlessWinsTotal++;
       if (endlessStreak > bestEndlessStreak) bestEndlessStreak = endlessStreak;
+      // Region Tier advance: only while there's still a next one to unlock (mirrors the
+      // tierIndex advance below) - once regionTierIndex reaches REGION_TIERS' last entry it
+      // just stays there, repeating indefinitely as the new Endless Mode.
+      if (wasUnlockingRegionTier) {
+        regionTierWins++;
+        if (regionTierWins >= TIER_WINS_REQUIRED) {
+          regionTierIndex++;
+          regionTierWins = 0;
+        }
+      }
     }
     tierWins++;
     if (!wasAtLastTier && tierWins >= TIER_WINS_REQUIRED) {
@@ -1168,7 +1339,8 @@
       // change, checking `tierIndex === 1` wouldn't be.
       if (shouldShowPowerupsIntro()) pendingPowerupsIntro = true;
       // Endless Mode intro: fires exactly once, the moment this win pushes tierIndex onto the
-      // ladder's last difficulty step for the first time ever.
+      // ladder's last difficulty step for the first time ever - now explains Region Tiers, since
+      // that's what immediately begins from here (see the overlay copy in index.html).
       if (isEndlessMode() && shouldShowEndlessModeIntro()) pendingEndlessModeIntro = true;
     }
     const tier = currentTier();
@@ -1179,12 +1351,21 @@
       const starText = '⭐'.repeat(stars);
       // Every win advances the displayed level number by exactly one, whether or not the
       // underlying difficulty step (tier) also changed this round - see the ladder comment up
-      // top for why the two are deliberately decoupled. Once in Endless Mode, the level counter
-      // no longer applies - the win streak is the score there instead.
-      const progressText = wasAtLastTier
-        ? `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins`
-        : `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`;
-      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${currentMaxLives()}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
+      // top for why the two are deliberately decoupled. Once past the classic ladder, framing
+      // switches to Region Tier unlock progress, then finally to pure Endless Mode once all of
+      // those are unlocked too - see currentTier()/regionTiersUnlocking() above.
+      const regionSuffix = tier.regionCount ? `, ${tier.regionCount} regions` : '';
+      const progressText = !wasAtLastTier
+        ? `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`
+        : wasUnlockingRegionTier
+          ? `🧩 Region Tier ${regionTierIndex + 1}/${REGION_TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critters${regionSuffix}) — win streak ${endlessStreak} (best ${bestEndlessStreak})`
+          : `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins`;
+      // The round just played may have run under a HIGHER life cap than currentMaxLives() now
+      // reflects - if this win just advanced tierIndex into Endless Mode, the cap has already
+      // dropped from 3 to 2 by the time this renders, but the round itself was still played at
+      // 3. wasAtLastTier (captured before that advance) says which cap actually applied.
+      const roundsLifeCap = wasAtLastTier ? ENDLESS_MODE_LIVES : MAX_LIVES;
+      el.winStats.textContent = `${starText}  Lives kept: ${state.lives}/${roundsLifeCap}  ·  +${stars} 🪙  ·  🔥 ${streak}\n${progressText}`;
       el.winOverlay.classList.remove('hidden');
     }, 300);
   }
@@ -1271,7 +1452,11 @@
   }
 
   function updateStats() {
-    el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(currentMaxLives() - state.lives);
+    // Math.max(0, ...) guards a real edge case: updateStats() runs at the tail of winRound(),
+    // after tierIndex may have already advanced into Endless Mode (lower life cap) for the round
+    // that's about to start - a just-finished round kept at its old, higher cap (e.g. 3/3) would
+    // otherwise compute a negative repeat() count against the new, lower one and throw.
+    el.lives.textContent = '❤️'.repeat(state.lives) + '🤍'.repeat(Math.max(0, currentMaxLives() - state.lives));
     el.coins.textContent = coins;
     el.found.textContent = state.revealed;
     el.sniffBtn.disabled = state.roundOver || coins < SNIFF_COST || !hasSniffableCritters();
@@ -1311,6 +1496,12 @@
         const decoded = cell.status === 'revealed' && cell.decodedWedges;
         const near = cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
         div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '');
+        if (state.regionOf) {
+          // A translucent inset shadow rather than a background color - paints over whatever
+          // the cell's normal hidden/revealed/flagged background already is instead of fighting
+          // it, so region boundaries stay visible through every existing cell state.
+          div.style.boxShadow = `inset 0 0 0 999px ${REGION_COLORS[state.regionOf[r][c] % REGION_COLORS.length]}`;
+        }
         if (decoded) {
           div.textContent = cell.decodedWedges.map(i => ARROWS[i]).join('');
         } else if (cell.status === 'revealed') {
@@ -1324,6 +1515,23 @@
         el.grid.appendChild(div);
       }
     }
+  }
+
+  // Region Tiers only - a color-swatch-to-count legend above the board, since cramming a number
+  // badge into an arbitrary cell of each region would collide with that cell's own arrow/flag/
+  // critter content. Counts are fixed for the whole round (unlike arrows, discovered as you go),
+  // so this only needs to run once per startRound(), not on every render().
+  function renderRegionLegend() {
+    if (!state.regionOf || !state.regionCounts) {
+      el.regionLegend.classList.add('hidden');
+      el.regionLegend.innerHTML = '';
+      return;
+    }
+    el.regionLegend.classList.remove('hidden');
+    el.regionLegend.innerHTML = state.regionCounts.map((count, id) => `
+      <span class="region-swatch" style="background: ${REGION_COLORS[id % REGION_COLORS.length]}"></span
+      ><span class="region-count">${count}</span>
+    `).join('');
   }
 
   el.newRoundBtn.addEventListener('click', () => {
@@ -1671,6 +1879,7 @@
     streakShieldArmed, lifeWardArmed, lastExtendDate, lastDecidedDate,
     tutorialActive, tutorialStep, totalWins, dailyQuests, pendingMilestone,
     endlessStreak, bestEndlessStreak, endlessWinsTotal, pendingEndlessModeIntro, isEndlessMode: isEndlessMode(),
+    regionTierIndex, regionTierWins, REGION_TIERS, regionTiersUnlocking: regionTiersUnlocking(), currentTier: currentTier(),
   });
 
   // --- Onboarding tutorial (2026-09-21, expanded same day per feedback the first cut was too

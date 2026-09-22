@@ -125,6 +125,36 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+/* Region Tiers only (see game.js) - a color-swatch-to-critter-count legend shown above the
+   board, matching the same translucent tints painted onto the grid's own cells. */
+.region-legend {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.region-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.region-count {
+  display: inline-flex;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  margin-right: 6px;
+  margin-left: -2px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  box-shadow: 0 2px 6px var(--shadow);
+}
+
 .board-frame {
   background: linear-gradient(160deg, var(--accent-strong), var(--accent));
   padding: 8px;
