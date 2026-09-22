@@ -108,6 +108,7 @@
     debugDateVal: document.getElementById('debugDateVal'),
     debugRegionTestBtn: document.getElementById('debugRegionTestBtn'),
     debugRotationTestBtn: document.getElementById('debugRotationTestBtn'),
+    debugFogTestBtn: document.getElementById('debugFogTestBtn'),
     debugExitTestBtn: document.getElementById('debugExitTestBtn'),
     debugTestModeVal: document.getElementById('debugTestModeVal'),
     debugResetBtn: document.getElementById('debugResetBtn'),
@@ -182,6 +183,7 @@
   // trackDailyQuestProgress(), and the continueDeclineBtn handler below.
   const DEBUG_REGION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4 };
   const DEBUG_ROTATION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4, rotationEnabled: true };
+  const DEBUG_FOG_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4, fogEnabled: true };
   let debugForcedTier = null;
 
   function currentTier() {
@@ -827,10 +829,18 @@
   // permB's clue values are computed lazily per cell (not a precomputed grid) so a mismatch
   // on an early cell - the common case for two random permutations - exits without ever
   // computing the rest of permB's grid.
-  function isConfusablePair(permA, gridA, permB, n) {
+  //
+  // fogOf (optional, Fog Tiers only) additionally skips any cell the player never actually gets
+  // shown a clue for - the exact same "what does the player get to see" principle that already
+  // applies to critter cells, just extended to foggy ones. This is what makes fog fair rather
+  // than a guess: uniqueness is checked against the real visible picture (non-fog arrows/ties
+  // plus the region count, which the candidate space is already filtered to match - see
+  // buildRegionRoundSetup), not the full board the player never gets to see.
+  function isConfusablePair(permA, gridA, permB, n, fogOf) {
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
         if (permA[r] === c || permB[r] === c) continue;
+        if (fogOf && fogOf[r][c]) continue;
         const wedges = nearestWedges(permB, n, r, c);
         const value = wedges.length > 1 ? TIE : ARROWS[wedges[0]];
         if (gridA[r][c] !== value) return false;
@@ -839,10 +849,10 @@
     return true;
   }
 
-  function hasUniqueSolution(perm, grid, allPerms, n) {
+  function hasUniqueSolution(perm, grid, allPerms, n, fogOf) {
     for (const other of allPerms) {
       if (other === perm) continue;
-      if (isConfusablePair(perm, grid, other, n)) return false;
+      if (isConfusablePair(perm, grid, other, n, fogOf)) return false;
     }
     return true;
   }
@@ -875,7 +885,7 @@
     return sorted.slice(start, start + windowSize).map(w => w.entry);
   }
 
-  function buildUniqueSolutionPool(n, c, candidateSpace) {
+  function buildUniqueSolutionPool(n, c, candidateSpace, fogOf) {
     const allPerms = candidateSpace || getPlacementSpace(n, c);
     const poolTarget = Math.min(30, allPerms.length);
     const maxAttempts = poolTarget * 40;
@@ -894,7 +904,8 @@
       // only needs to be distinguishable from OTHER placements sharing the same region counts,
       // which is exactly correct: a placement with different region counts is already
       // distinguishable via that clue alone, so it doesn't belong in the comparison at all.
-      if (hasUniqueSolution(perm, grid, allPerms, n)) pool.push({ perm, grid });
+      // fogOf (Fog Tiers only) narrows what's comparable even further - see isConfusablePair.
+      if (hasUniqueSolution(perm, grid, allPerms, n, fogOf)) pool.push({ perm, grid });
     }
     if (!pool.length) {
       const perm = allPerms[Math.floor(Math.random() * allPerms.length)];
@@ -971,7 +982,11 @@
   // correct for it. On the rare board where no vector has enough matching candidates after a few
   // tries, falls back to the unfiltered space - the round still works, it just can't show counts
   // until after the first tap that round.
-  function buildRegionRoundSetup(n, critterCount, regionCount) {
+  //
+  // fogEnabled (Fog Tiers, debug pilot 2026-09-22) layers fog on top of this, once a valid
+  // region-count vector is found - see pickFogCells/fogIsSolvable below for how fog stays
+  // provably solvable rather than becoming a real guess.
+  function buildRegionRoundSetup(n, critterCount, regionCount, fogEnabled) {
     const regionOf = partitionIntoRegions(n, regionCount);
     const allPerms = getPlacementSpace(n, critterCount);
     const poolTarget = Math.min(30, allPerms.length);
@@ -980,11 +995,57 @@
       const targetCounts = regionCountsFor(seed, regionOf, regionCount);
       const key = targetCounts.join(',');
       const matching = allPerms.filter(perm => regionCountsFor(perm, regionOf, regionCount).join(',') === key);
-      if (matching.length >= Math.min(5, poolTarget)) {
-        return { regionOf, regionCounts: targetCounts, candidateSpace: matching };
+      if (matching.length < Math.min(5, poolTarget)) continue;
+      if (!fogEnabled) return { regionOf, regionCounts: targetCounts, candidateSpace: matching, fogOf: null };
+      // Try fog at decreasing density, then no fog at all, rather than ever shipping a board
+      // whose fog cells aren't actually resolvable - the "no unfair guessing" guarantee is never
+      // weakened for fog, fog is just opportunistic on top of it.
+      for (const fogCap of [3, 2, 1, 0]) {
+        if (fogCap === 0) return { regionOf, regionCounts: targetCounts, candidateSpace: matching, fogOf: null };
+        const fogOf = pickFogCells(regionOf, n, regionCount, fogCap);
+        if (fogIsSolvable(matching, n, fogOf)) return { regionOf, regionCounts: targetCounts, candidateSpace: matching, fogOf };
       }
     }
-    return { regionOf, regionCounts: null, candidateSpace: allPerms };
+    return { regionOf, regionCounts: null, candidateSpace: allPerms, fogOf: null };
+  }
+
+  // Picks up to fogCap cells per region (min 1, ~20% of that region's size, whichever is
+  // smaller) to show no arrow/tie at all when revealed - see the .fog rendering in render() and
+  // the fog-aware uniqueness check in isConfusablePair. Purely a property of the region layout,
+  // not of any specific critter placement - decided before a placement is even chosen, same as
+  // regionOf itself.
+  function pickFogCells(regionOf, n, regionCount, fogCap) {
+    const fogOf = Array.from({ length: n }, () => Array(n).fill(false));
+    for (let regionId = 0; regionId < regionCount; regionId++) {
+      const cells = [];
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (regionOf[r][c] === regionId) cells.push([r, c]);
+      const target = Math.min(fogCap, Math.max(1, Math.round(cells.length * 0.2)));
+      shuffledIndices(cells.length).slice(0, target).forEach((idx) => {
+        const [r, c] = cells[idx];
+        fogOf[r][c] = true;
+      });
+    }
+    return fogOf;
+  }
+
+  // Whether AT LEAST ONE candidate in `matching` still has a provably unique solution once fogOf
+  // is applied - a real, bounded search (same sampling-not-exhaustive approach as
+  // buildUniqueSolutionPool, for the same performance reason: matching can be large, and
+  // checking every candidate against every other is quadratic), not an assumption. If nothing
+  // in the sample works, the caller tries less fog rather than risking an unfair board.
+  function fogIsSolvable(matching, n, fogOf) {
+    const budget = Math.min(30, matching.length) * 3;
+    const tried = new Set();
+    let checks = 0;
+    while (checks < budget && tried.size < matching.length) {
+      checks++;
+      const idx = Math.floor(Math.random() * matching.length);
+      if (tried.has(idx)) continue;
+      tried.add(idx);
+      const perm = matching[idx];
+      if (hasUniqueSolution(perm, computeClueGrid(perm, n), matching, n, fogOf)) return true;
+    }
+    return false;
   }
 
   // --- Rotating Compass (debug pilot, locked design 2026-09-22, not yet on the real ladder) ---
@@ -1012,11 +1073,13 @@
     const n = tier.gridSize;
     const critterCount = tier.critterCount;
     document.documentElement.style.setProperty('--grid-size', n);
-    const regionSetup = tier.regionCount ? buildRegionRoundSetup(n, critterCount, tier.regionCount) : null;
+    const regionSetup = tier.regionCount ? buildRegionRoundSetup(n, critterCount, tier.regionCount, tier.fogEnabled) : null;
     state = {
       n,
       critterCount,
-      pool: regionSetup ? buildUniqueSolutionPool(n, critterCount, regionSetup.candidateSpace) : buildUniqueSolutionPool(n, critterCount),
+      pool: regionSetup
+        ? buildUniqueSolutionPool(n, critterCount, regionSetup.candidateSpace, regionSetup.fogOf)
+        : buildUniqueSolutionPool(n, critterCount),
       perm: null,
       grid: null,
       firstTapDone: false,
@@ -1031,12 +1094,14 @@
       regionOf: regionSetup ? regionSetup.regionOf : null,
       regionCounts: regionSetup ? regionSetup.regionCounts : null,
       regionRotation: (regionSetup && tier.rotationEnabled) ? assignRegionRotations(tier.regionCount) : null,
+      fogOf: regionSetup ? regionSetup.fogOf : null,
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
     const regionSuffix = tier.regionCount ? `, ${tier.regionCount} regions` : '';
+    const fogSuffix = state.fogOf ? ' · foggy' : (tier.fogEnabled ? ' · fog unavailable this board' : '');
     el.level.textContent = debugForcedTier
-      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters${regionSuffix}${tier.rotationEnabled ? ' · rotating' : ''} (nothing here is saved)`
+      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters${regionSuffix}${tier.rotationEnabled ? ' · rotating' : ''}${fogSuffix} (nothing here is saved)`
       : !isEndlessMode()
         ? `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`
         : regionTiersUnlocking()
@@ -1059,6 +1124,13 @@
         const key = state.regionCounts.join(',');
         const stillMatching = space.filter(p => regionCountsFor(p, state.regionOf, state.regionCounts.length).join(',') === key);
         if (stillMatching.length) space = stillMatching;
+      }
+      // Fog Tiers: same best-effort spirit as the region-count filter just above - prefer
+      // whatever's still provably unique under the fog already shown, only falling back to the
+      // wider set if this extremely rare fallback-within-a-fallback finds nothing at all.
+      if (state.fogOf) {
+        const stillUnique = space.filter(p => hasUniqueSolution(p, computeClueGrid(p, state.n), space, state.n, state.fogOf));
+        if (stillUnique.length) space = stillUnique;
       }
       candidates = space.map(p => ({ perm: p, grid: computeClueGrid(p, state.n) }));
     }
@@ -1323,7 +1395,11 @@
 
   function useDecodeAt(r, c) {
     const cell = state.cells[r][c];
-    if (cell.status !== 'revealed' || state.grid[r][c] !== TIE) {
+    const foggy = state.fogOf && state.fogOf[r][c];
+    // A foggy tile never actually shows a ✦ to begin with (see render()) - it always displays
+    // fog regardless of what its true clue is, so there's nothing here to have selected. Without
+    // this guard, Decode could reach through the fog and reveal the exact info fog exists to hide.
+    if (foggy || cell.status !== 'revealed' || state.grid[r][c] !== TIE) {
       showToast('Decode only works on a revealed ✦ tile.');
       return;
     }
@@ -1570,9 +1646,15 @@
       for (let c = 0; c < state.n; c++) {
         const cell = state.cells[r][c];
         const div = document.createElement('div');
-        const decoded = cell.status === 'revealed' && cell.decodedWedges;
-        const near = cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
-        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '');
+        // Fog Tiers: a foggy tile that's revealed-and-safe shows no clue at all - not an arrow,
+        // not a tie, not even the "near" proximity warning (which would itself leak "something's
+        // close" through fog). Decode can't target it either (see useDecodeAt's guard) - fog
+        // means genuinely no directional information, full stop, only the region count can
+        // narrow it down. state.fogOf is only set on the debug Fog Tiers test board.
+        const foggy = !!(state.fogOf && state.fogOf[r][c]);
+        const decoded = !foggy && cell.status === 'revealed' && cell.decodedWedges;
+        const near = !foggy && cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
+        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '') + (foggy && cell.status === 'revealed' ? ' fog' : '');
         if (state.regionOf) {
           // A translucent inset shadow rather than a background color - paints over whatever
           // the cell's normal hidden/revealed/flagged background already is instead of fighting
@@ -1585,6 +1667,8 @@
         const rotationSteps = state.regionRotation ? state.regionRotation[state.regionOf[r][c]] : 0;
         if (decoded) {
           div.textContent = cell.decodedWedges.map(i => ARROWS[(i + rotationSteps) % 8]).join('');
+        } else if (cell.status === 'revealed' && foggy) {
+          div.textContent = '░';
         } else if (cell.status === 'revealed') {
           div.textContent = rotateGlyph(state.grid[r][c], rotationSteps);
         } else if (cell.status === 'critter') {
@@ -1777,8 +1861,9 @@
     el.debugDateVal.textContent =
       `Simulated date: ${todayDateString()}  ·  lastDecided: ${lastDecidedDate || '—'}  ·  lastExtend: ${lastExtendDate || '—'}  ·  streak: ${streak}`;
     el.debugExitTestBtn.classList.toggle('hidden', !debugForcedTier);
+    const debugModeLabel = debugForcedTier && (debugForcedTier.rotationEnabled ? 'Rotating Compass' : debugForcedTier.fogEnabled ? 'Fog Tiers' : 'Region Tier');
     el.debugTestModeVal.textContent = debugForcedTier
-      ? `🧪 Testing mode active (${debugForcedTier.rotationEnabled ? 'Rotating Compass' : 'Region Tier'} board) - real progress (tierIndex ${tierIndex}, regionTierIndex ${regionTierIndex}) is untouched.`
+      ? `🧪 Testing mode active (${debugModeLabel} board) - real progress (tierIndex ${tierIndex}, regionTierIndex ${regionTierIndex}) is untouched.`
       : '';
   }
 
@@ -1803,6 +1888,12 @@
     updateDebugPanel();
     startRound();
     showToast('🧭 Each region\'s arrows are rotated by a fixed amount, shown as a rotated icon in its legend entry (tap it anytime) — rotate what you see backward by that much to find the real direction.');
+  });
+  el.debugFogTestBtn.addEventListener('click', () => {
+    debugForcedTier = DEBUG_FOG_TEST_TIER;
+    updateDebugPanel();
+    startRound();
+    showToast('🌫️ A few tiles per region show no arrow at all when revealed - the region\'s count is the only way to figure those out, once the visible arrows run out.');
   });
   el.debugExitTestBtn.addEventListener('click', () => {
     debugForcedTier = null;
