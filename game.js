@@ -825,6 +825,7 @@
   }
 
   function startRound() {
+    commitPendingQuestProgress();
     const tier = currentTier();
     const n = tier.gridSize;
     const critterCount = tier.critterCount;
@@ -1518,6 +1519,10 @@
 
   let dailyQuests = { date: null, progress: {}, claimed: {} };
 
+  // Progress earned during the round in progress, held here rather than written straight into
+  // dailyQuests.progress - see trackDailyQuestProgress/commitPendingQuestProgress below for why.
+  let pendingQuestProgress = {};
+
   function persistDailyQuests() {
     try { localStorage.setItem(DAILY_QUESTS_KEY, JSON.stringify(dailyQuests)); } catch (err) { /* storage unavailable - progress just won't survive a reload */ }
   }
@@ -1566,13 +1571,29 @@
   }
 
   // Tracks progress toward whichever pool entry `id` corresponds to, active today or not (see
-  // the pool comment above). Stops accumulating past that entry's target (and once claimed)
-  // since nothing reads the excess.
+  // the pool comment above). Held in pendingQuestProgress rather than written straight into
+  // dailyQuests.progress/the badge/the panel - a live update mid-round would leak hidden board
+  // state (most notably "correctly flag a critter", which would otherwise confirm a flag was
+  // right the instant it's placed, before the round - or even that tile - is actually revealed).
+  // commitPendingQuestProgress() applies it once the round genuinely ends.
   function trackDailyQuestProgress(id, amount) {
+    pendingQuestProgress[id] = (pendingQuestProgress[id] || 0) + amount;
+  }
+
+  // Called at the start of every new round (win, loss/reset, or manually abandoning one via New
+  // round all funnel through startRound()) to apply whatever accumulated during the round that
+  // just ended. Progress earned this way still counts even if the round was lost or abandoned -
+  // only the *timing* of when it becomes visible is deferred, not whether it counts at all.
+  function commitPendingQuestProgress() {
+    const ids = Object.keys(pendingQuestProgress);
+    if (!ids.length) return;
     ensureDailyQuestsForToday();
-    const def = DAILY_QUEST_POOL.find(d => d.id === id);
-    if (!def || dailyQuests.claimed[id]) return;
-    dailyQuests.progress[id] = Math.min(def.target, (dailyQuests.progress[id] || 0) + amount);
+    for (const id of ids) {
+      const def = DAILY_QUEST_POOL.find(d => d.id === id);
+      if (!def || dailyQuests.claimed[id]) continue;
+      dailyQuests.progress[id] = Math.min(def.target, (dailyQuests.progress[id] || 0) + pendingQuestProgress[id]);
+    }
+    pendingQuestProgress = {};
     persistDailyQuests();
     updateDailyQuestsBadge();
   }
