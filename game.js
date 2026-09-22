@@ -266,9 +266,13 @@
     return 1; // any win is at least 1 star, even at 0-1 lives kept
   }
 
+  // Returns true if this call was the day's deciding round (streak actually changed), false if
+  // today's outcome was already locked in by an earlier round. Callers use this to explain why
+  // the 🔥 number isn't moving on a 2nd/3rd win the same day - without it, that reads as a bug
+  // ("I won, why didn't my streak go up?") rather than the intended once-a-day rule.
   function recordRoundResult(won) {
     const today = todayDateString();
-    if (lastDecidedDate === today) return; // a later round today doesn't change today's outcome
+    if (lastDecidedDate === today) return false; // a later round today doesn't change today's outcome
     lastDecidedDate = today;
 
     const shieldSavedThis = !won && streakShieldArmed;
@@ -284,6 +288,7 @@
       streak = 0;
     }
     persistSave();
+    return true;
   }
 
   // --- Leaderboard (2026-09-21 product decision): anonymous playerId + self-chosen nickname,
@@ -1110,7 +1115,8 @@
     state.roundOver = true;
     const stars = starsForRound();
     coins += stars; // 1 coin per star, per spec's proposal
-    recordRoundResult(true);
+    const streakDecidedToday = recordRoundResult(true);
+    if (!streakDecidedToday) showToast('🔥 Streak already counted for today — come back tomorrow!');
     submitScore(stars);
 
     totalWins++;
@@ -1359,7 +1365,8 @@
 
   el.continueDeclineBtn.addEventListener('click', () => {
     el.continueOverlay.classList.add('hidden');
-    recordRoundResult(false);
+    const streakDecidedToday = recordRoundResult(false);
+    if (!streakDecidedToday) showToast('🔥 Streak already safe for today — this loss doesn’t affect it.');
     endlessStreak = 0; // a real loss - no-op outside Endless Mode, since it's already 0 there
     persistSave();
     startRound();
