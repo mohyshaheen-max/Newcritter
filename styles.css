@@ -125,8 +125,8 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
-/* Rotation Tiers only (see game.js) - a color-swatch-to-rotation legend shown above the board,
-   matching the same translucent tints painted onto the grid's own cells. */
+/* Rotation Tiers only (see game.js) - holds the single whole-board rotation icon shown above the
+   board. */
 .region-legend {
   display: flex;
   gap: 6px;
@@ -134,16 +134,9 @@ h1 {
   flex-wrap: wrap;
   justify-content: center;
 }
-.region-swatch {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-}
-/* A rotated arrow icon showing that zone's fixed rotation for the round (see game.js
-   renderRegionLegend). Tappable to preview it visually on the board (see previewRegionRotation
-   in game.js) - the icon alone doesn't communicate anything on its own. */
+/* A rotated arrow icon showing the whole board's fixed rotation for the round (see game.js
+   renderRotationIcon). Tappable to preview it visually on the board (see previewRotation in
+   game.js) - the icon alone doesn't communicate anything on its own. */
 .region-rotation {
   display: inline-flex;
   align-items: center;
@@ -185,6 +178,13 @@ h1 {
   cursor: pointer;
   touch-action: none;
   transition: transform 0.08s ease, background 0.15s ease, outline 0.15s ease;
+}
+/* Rotating Compass's preview animation (see previewRotation in game.js) spins this span alone,
+   never the `.cell` div itself - the div also carries border-radius/background/border styling
+   that would visibly deform the tile's shape if rotated directly. inline-block so the rotation
+   pivots around the glyph's own center rather than an inline box's baseline-anchored one. */
+.cell .glyph {
+  display: inline-block;
 }
 .cell.hidden:active { transform: scale(0.9); }
 /* Real mouse hover only - on a touchscreen, :hover has no "leave" event to clear it, so a tile

@@ -44,33 +44,22 @@
   // never actually became necessary to solve the board, and even with fog forcing it to matter in
   // the strict provable sense, it didn't change how playing felt - a bare count only narrows down
   // *how many* critters remain, never *where*, so the endgame was still closer to a guess than a
-  // deduction. See compass-critters-spec.md's Difficulty progression section for the full history.
+  // deduction. Rotation replaced it as the mechanic - initially still per-zone (multiple regions,
+  // each with its own rotation, specifically because a single board-wide rotation was identified
+  // as trivial: a known, uniform offset is undone by one mental subtraction and adds nothing).
+  // Simplified to one whole-board rotation and the per-zone coloring dropped entirely on
+  // 2026-09-22 per explicit product direction, after that tradeoff was raised and knowingly
+  // accepted - see compass-critters-spec.md's Difficulty progression section for the full history
+  // and the caveat this reintroduces (rotation alone, at this scope, isn't a strong difficulty
+  // lever - it's a presentation choice more than a puzzle-solving one now).
   //
-  // What replaces it: the same board is split into zones, but instead of a critter-count clue,
-  // each zone has its own fixed rotation - a tile's displayed arrow is rotated by the rotation of
-  // the zone the TILE is in, never the critter's. This still reuses the identical
-  // (gridSize, critterCount) generation pipeline as the classic ladder completely unchanged, since
-  // rotation is purely a render-time relabeling (see rotateGlyph) with zero effect on solvability
-  // - simpler to generate than Region Tiers was, since there's no count vector to match candidates
-  // against anymore. Difficulty ramps by zone count (3 -> 5): more zones means more independent
-  // rotations to track simultaneously, which is what makes this a real difficulty lever rather
-  // than the "read one number, do one subtraction" version that was correctly called out as
-  // ridiculous to use - see previewRegionRotation below for the visual (not arithmetic) fix.
+  // This still reuses the identical (gridSize, critterCount) generation pipeline as the classic
+  // ladder completely unchanged, since rotation is purely a render-time relabeling (see
+  // rotateGlyph) with zero effect on solvability.
   const ROTATION_TIERS = [
-    { gridSize: 8, critterCount: 6, regionCount: 3, rotationEnabled: true },
-    { gridSize: 8, critterCount: 7, regionCount: 4, rotationEnabled: true },
-    { gridSize: 8, critterCount: 8, regionCount: 4, rotationEnabled: true },
-    { gridSize: 8, critterCount: 8, regionCount: 5, rotationEnabled: true },
-  ];
-  // Low-opacity tints applied per-cell via box-shadow (see render()) so zone boundaries show
-  // through whatever the cell's normal hidden/revealed/flagged background already is, without
-  // fighting that CSS. One per ROTATION_TIERS' largest regionCount.
-  const REGION_COLORS = [
-    'rgba(220, 80, 80, 0.22)',
-    'rgba(70, 130, 220, 0.22)',
-    'rgba(90, 180, 90, 0.22)',
-    'rgba(230, 170, 40, 0.22)',
-    'rgba(160, 90, 200, 0.22)',
+    { gridSize: 8, critterCount: 6, rotationEnabled: true },
+    { gridSize: 8, critterCount: 7, rotationEnabled: true },
+    { gridSize: 8, critterCount: 8, rotationEnabled: true },
   ];
   // The round-within-the-whole-ladder number (1-based) currently being played, per the split
   // explained above: every difficulty step spans TIER_WINS_REQUIRED consecutive level numbers.
@@ -189,7 +178,7 @@
   // Every persistent side effect a normal round has (coins, streak, leaderboard, daily quests,
   // ladder/rotation-tier advance) is skipped for as long as this is set - see winRound(),
   // trackDailyQuestProgress(), and the continueDeclineBtn handler below.
-  const DEBUG_ROTATION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4, rotationEnabled: true };
+  const DEBUG_ROTATION_TEST_TIER = { gridSize: 8, critterCount: 7, rotationEnabled: true };
   let debugForcedTier = null;
 
   function currentTier() {
@@ -906,80 +895,18 @@
     return biasPoolByTier(pool);
   }
 
-  // Randomized territory-growth partition: seed `regionCount` cells, then round-robin each
-  // region claiming a random unclaimed neighbor until the whole board is covered. Not a
-  // rigorously balanced partition (some regions end up bigger than others), which is fine here -
-  // region shape carries no gameplay meaning, only which zone each tile belongs to (for Rotating
-  // Compass's rotation-per-zone rule) does.
-  function partitionIntoRegions(n, regionCount) {
-    const regionOf = Array.from({ length: n }, () => Array(n).fill(null));
-    const frontier = Array.from({ length: regionCount }, () => []);
-    const allCells = [];
-    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) allCells.push([r, c]);
-    shuffledIndices(allCells.length).slice(0, regionCount).forEach((cellIdx, regionId) => {
-      const [r, c] = allCells[cellIdx];
-      regionOf[r][c] = regionId;
-      frontier[regionId].push([r, c]);
-    });
-    let remaining = n * n - regionCount;
-    let stalled = false;
-    while (remaining > 0 && !stalled) {
-      stalled = true;
-      for (let regionId = 0; regionId < regionCount && remaining > 0; regionId++) {
-        const f = frontier[regionId];
-        while (f.length) {
-          const idx = Math.floor(Math.random() * f.length);
-          const [r, c] = f[idx];
-          const neighbors = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
-            .filter(([nr, nc]) => nr >= 0 && nr < n && nc >= 0 && nc < n && regionOf[nr][nc] === null);
-          if (!neighbors.length) { f.splice(idx, 1); continue; }
-          const [nr, nc] = neighbors[Math.floor(Math.random() * neighbors.length)];
-          regionOf[nr][nc] = regionId;
-          frontier[regionId].push([nr, nc]);
-          remaining--;
-          stalled = false;
-          break;
-        }
-      }
-    }
-    // A region can stall out (its frontier fully exhausted) before the whole board is claimed if
-    // it gets walled in by faster-growing neighbors - rare with 3-5 regions on an 8x8 board, but
-    // any leftover cells just join whichever already-claimed region borders them.
-    if (remaining > 0) {
-      for (let r = 0; r < n; r++) {
-        for (let c = 0; c < n; c++) {
-          if (regionOf[r][c] !== null) continue;
-          const neighborRegion = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
-            .map(([nr, nc]) => (nr >= 0 && nr < n && nc >= 0 && nc < n) ? regionOf[nr][nc] : null)
-            .find(id => id !== null);
-          regionOf[r][c] = neighborRegion != null ? neighborRegion : 0;
-        }
-      }
-    }
-    return regionOf;
-  }
-
-  // Splits the board into `regionCount` zones purely for Rotating Compass's benefit - no critter-
-  // count clue involved (that was Region Tiers, scrapped 2026-09-22 - see the ROTATION_TIERS
-  // comment up top for why). Since rotation is a pure render-time relabeling with zero effect on
-  // solvability (see rotateGlyph), this needs none of the region-count-vector matching the old
-  // version did - it's just the zone partition plus each zone's fixed rotation.
-  function buildRotationZoneSetup(n, regionCount) {
-    return { regionOf: partitionIntoRegions(n, regionCount), regionRotation: assignRegionRotations(regionCount) };
-  }
-
   // --- Rotating Compass (locked design 2026-09-22, now the real post-ladder mechanic) ---
-  // Each zone gets its own fixed rotation for the round (0/90/180/270deg only - "steps" below are
-  // counted in 45deg wedge units, so a step of 2 is a clean 90deg). THE RULE: a tile's displayed
-  // arrow is rotated by the rotation of the zone the TILE ITSELF is in, never the critter's zone -
-  // that's what forces tracking multiple independent offsets instead of one global fact (see the
-  // design discussion in the spec). Nothing here is ever hidden - render-time only, the true clue/
-  // perm never changes, so it stays exactly as fair as every other tier, and doesn't need any of
-  // the uniqueness-check changes Region Tiers/Fog Tiers needed - the classic ladder's generation
-  // pipeline is reused completely unchanged.
+  // The whole board gets one fixed rotation for the round (0/90/180/270deg only - "steps" below
+  // are counted in 45deg wedge units, so a step of 2 is a clean 90deg). Simplified down from a
+  // per-zone version (each zone its own independent rotation) to a single whole-board rotation
+  // per explicit product direction on 2026-09-22, after that tradeoff was raised and knowingly
+  // accepted - see the ROTATION_TIERS comment up top. Nothing here is ever hidden - render-time
+  // only, the true clue/perm never changes, so it stays exactly as fair as every other tier, and
+  // doesn't need any of the uniqueness-check changes Region Tiers/Fog Tiers needed - the classic
+  // ladder's generation pipeline is reused completely unchanged.
   const ROTATION_STEPS = [0, 2, 4, 6];
-  function assignRegionRotations(regionCount) {
-    return Array.from({ length: regionCount }, () => ROTATION_STEPS[Math.floor(Math.random() * ROTATION_STEPS.length)]);
+  function pickRotation() {
+    return ROTATION_STEPS[Math.floor(Math.random() * ROTATION_STEPS.length)];
   }
   function rotateGlyph(glyph, steps) {
     if (!steps || glyph === TIE) return glyph;
@@ -993,7 +920,9 @@
     const n = tier.gridSize;
     const critterCount = tier.critterCount;
     document.documentElement.style.setProperty('--grid-size', n);
-    const zoneSetup = tier.regionCount ? buildRotationZoneSetup(n, tier.regionCount) : null;
+    // null (not 0) when rotation is off this round, so a randomly-picked 0-step rotation (still
+    // "on", just happens to be the identity) doesn't get confused with the feature being absent.
+    const rotationSteps = tier.rotationEnabled ? pickRotation() : null;
     state = {
       n,
       critterCount,
@@ -1009,20 +938,18 @@
       history: [],
       pulseArmed: false,
       decodeArmed: false,
-      regionOf: zoneSetup ? zoneSetup.regionOf : null,
-      regionRotation: zoneSetup ? zoneSetup.regionRotation : null,
+      rotationSteps,
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
-    const zoneSuffix = tier.regionCount ? `, ${tier.regionCount} zones` : '';
     el.level.textContent = debugForcedTier
-      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters${zoneSuffix} (nothing here is saved)`
+      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters (nothing here is saved)`
       : !isEndlessMode()
         ? `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`
         : rotationTiersUnlocking()
-          ? `🧭 Rotation Tier ${rotationTierIndex + 1}/${ROTATION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters${zoneSuffix}`
-          : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters${zoneSuffix}`;
-    renderRegionLegend();
+          ? `🧭 Rotation Tier ${rotationTierIndex + 1}/${ROTATION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters`
+          : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters`;
+    renderRotationIcon();
     updateStats();
     render();
   }
@@ -1377,11 +1304,10 @@
       // top for why the two are deliberately decoupled. Once past the classic ladder, framing
       // switches to Rotation Tier unlock progress, then finally to pure Endless Mode once all of
       // those are unlocked too - see currentTier()/rotationTiersUnlocking() above.
-      const zoneSuffix = tier.regionCount ? `, ${tier.regionCount} zones` : '';
       const progressText = !wasAtLastTier
         ? `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`
         : wasUnlockingRotationTier
-          ? `🧭 Rotation Tier ${rotationTierIndex + 1}/${ROTATION_TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critters${zoneSuffix}) — win streak ${endlessStreak} (best ${bestEndlessStreak})`
+          ? `🧭 Rotation Tier ${rotationTierIndex + 1}/${ROTATION_TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critters) — win streak ${endlessStreak} (best ${bestEndlessStreak})`
           : `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins`;
       // The round just played may have run under a HIGHER life cap than currentMaxLives() now
       // reflects - if this win just advanced tierIndex into Endless Mode, the cap has already
@@ -1507,7 +1433,7 @@
 
     el.streak.textContent = streak;
     updateDebugPanel();
-    renderRegionLegend();
+    renderRotationIcon();
     persistSave();
   }
 
@@ -1520,20 +1446,18 @@
         const decoded = cell.status === 'revealed' && cell.decodedWedges;
         const near = cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
         div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '');
-        if (state.regionOf) {
-          // A translucent inset shadow rather than a background color - paints over whatever
-          // the cell's normal hidden/revealed/flagged background already is instead of fighting
-          // it, so zone boundaries stay visible through every existing cell state.
-          div.style.boxShadow = `inset 0 0 0 999px ${REGION_COLORS[state.regionOf[r][c] % REGION_COLORS.length]}`;
-        }
-        // Rotating Compass: a tile's arrow is rotated by ITS OWN zone's rotation, never the
-        // critter's - see the design note above rotateGlyph(). state.regionRotation is only set
-        // once a player has passed the classic ladder (or on the debug test board).
-        const rotationSteps = state.regionRotation ? state.regionRotation[state.regionOf[r][c]] : 0;
+        // Rotating Compass: every tile's arrow is rotated by the same whole-board rotation - see
+        // the design note above rotateGlyph(). state.rotationSteps is only set once a player has
+        // passed the classic ladder (or on the debug test board).
+        const rotationSteps = state.rotationSteps || 0;
         if (decoded) {
-          div.textContent = cell.decodedWedges.map(i => ARROWS[(i + rotationSteps) % 8]).join('');
+          // Wrapped in an inner span (not set as the div's own textContent) so
+          // previewRotation()'s CSS transform can spin just the glyph, never the `.cell` div
+          // itself - that div also carries border-radius/background/border styling, and
+          // rotating it directly visibly deforms the tile's shape.
+          div.innerHTML = `<span class="glyph">${cell.decodedWedges.map(i => ARROWS[(i + rotationSteps) % 8]).join('')}</span>`;
         } else if (cell.status === 'revealed') {
-          div.textContent = rotateGlyph(state.grid[r][c], rotationSteps);
+          div.innerHTML = `<span class="glyph">${rotateGlyph(state.grid[r][c], rotationSteps)}</span>`;
         } else if (cell.status === 'critter') {
           div.textContent = ANIMALS[r % ANIMALS.length];
         } else if (cell.flagged) {
@@ -1545,27 +1469,25 @@
     }
   }
 
-  // Rotation Tiers only - a color-swatch-to-rotation legend above the board, showing each zone's
-  // fixed rotation as a rotated arrow icon (tappable - see the click handler below - since the
-  // icon alone doesn't communicate anything on its own). No count of any kind - that was Region
-  // Tiers, scrapped 2026-09-22 (see the ROTATION_TIERS comment up top). Fixed for the whole
-  // round, so this only needs to run once per startRound(), not on every state change.
-  function renderRegionLegend() {
-    if (!state.regionOf || !state.regionRotation) {
+  // Rotation Tiers only - a single tappable rotation icon above the board, showing the whole
+  // board's fixed rotation as a rotated arrow (tappable - see the click handler below - since the
+  // icon alone doesn't communicate anything on its own). No count/swatch of any kind - that was
+  // Region Tiers (colored zones), scrapped 2026-09-22 (see the ROTATION_TIERS comment up top).
+  // Fixed for the whole round, so this only needs to run once per startRound(), not on every
+  // state change.
+  function renderRotationIcon() {
+    if (state.rotationSteps == null) {
       el.regionLegend.classList.add('hidden');
       el.regionLegend.innerHTML = '';
       return;
     }
     el.regionLegend.classList.remove('hidden');
-    el.regionLegend.innerHTML = state.regionRotation.map((steps, id) => `
-      <span class="region-swatch" style="background: ${REGION_COLORS[id % REGION_COLORS.length]}"></span
-      ><span class="region-rotation" data-region-id="${id}" style="transform: rotate(${steps * 45}deg)">↑</span>
-    `).join('');
+    el.regionLegend.innerHTML = `<span class="region-rotation" style="transform: rotate(${state.rotationSteps * 45}deg)">↑</span>`;
   }
 
   // wedgeIndex counts counter-clockwise from East (see the ARROWS comment up top), but CSS
   // rotate() is clockwise-positive - negating converts between the two conventions. Used only by
-  // previewRegionRotation()'s animation; the normal (non-preview) rendering never needs this,
+  // previewRotation()'s animation; the normal (non-preview) rendering never needs this,
   // since rotateGlyph() stays entirely in array-index space and never touches CSS degrees.
   function wedgeIndexToCssDeg(wedgeIndex) {
     return -wedgeIndex * 45;
@@ -1580,25 +1502,25 @@
   }
 
   // Rotating Compass only (2026-09-22, replacing the degree-number toast this started with -
-  // testing found "rotated 90°, subtract that yourself" too abstract to actually use). Tapping a
-  // region's rotation icon spins every currently-revealed arrow in that region from its displayed
-  // direction to its true one, holds briefly, then spins back - a direct visual answer instead of
-  // mental arithmetic. Deliberately temporary, not a toggle: a permanent per-region reveal would
-  // let a player neutralize the whole mechanic in a few taps at the start of a round, which
-  // defeats the point of it being a difficulty layer at all (see the chat discussion this came
-  // from). Purely cosmetic - nothing in `state` changes, so it's safe to interrupt: manipulates
-  // the DOM cells render() already drew directly (not through render() itself, which does a full
-  // grid rebuild that would kill an in-flight CSS transition), and if any other action calls
-  // render() mid-preview, that just wipes the animation and redraws normally, as if it never
-  // happened.
-  function previewRegionRotation(regionId) {
-    if (!state.regionOf || !state.regionRotation) return;
-    const steps = state.regionRotation[regionId];
+  // testing found "rotated 90°, subtract that yourself" too abstract to actually use). Tapping the
+  // rotation icon spins every currently-revealed arrow on the board from its displayed direction
+  // to its true one, holds briefly, then spins back - a direct visual answer instead of mental
+  // arithmetic. Deliberately temporary, not a toggle: a permanent reveal would let a player
+  // neutralize the whole mechanic in a few taps at the start of a round, which defeats the point
+  // of it being a difficulty layer at all (see the chat discussion this came from). Purely
+  // cosmetic - nothing in `state` changes, so it's safe to interrupt: manipulates the DOM directly
+  // (each cell's inner `.glyph` span, not the `.cell` div itself, which also carries border-radius/
+  // background/border styling that would visibly deform if rotated) rather than through render()
+  // itself, which does a full grid rebuild that would kill an in-flight CSS transition - if any
+  // other action calls render() mid-preview, that just wipes the animation and redraws normally,
+  // as if it never happened.
+  function previewRotation() {
+    if (state.rotationSteps == null) return;
+    const steps = state.rotationSteps;
     const cellEls = el.grid.children;
     const animated = [];
     for (let r = 0; r < state.n; r++) {
       for (let c = 0; c < state.n; c++) {
-        if (state.regionOf[r][c] !== regionId) continue;
         const cell = state.cells[r][c];
         if (cell.status !== 'revealed' || cell.decodedWedges) continue;
         const glyph = state.grid[r][c];
@@ -1607,33 +1529,34 @@
         if (trueIdx < 0) continue;
         const displayedIdx = (trueIdx + steps) % 8;
         const div = cellEls[r * state.n + c];
-        if (!div) continue;
+        const glyphEl = div && div.querySelector('.glyph');
+        if (!glyphEl) continue;
         const fromDeg = wedgeIndexToCssDeg(displayedIdx);
         const toDeg = shortestEquivalentDeg(fromDeg, wedgeIndexToCssDeg(trueIdx));
-        div.textContent = '→'; // single base glyph, rotated via transform instead of swapping characters
-        div.style.transition = 'none';
-        div.style.transform = `rotate(${fromDeg}deg)`;
-        void div.offsetWidth; // forces layout so the browser registers the start angle before animating
-        div.style.transition = 'transform 0.5s ease';
-        div.style.transform = `rotate(${toDeg}deg)`;
-        animated.push({ div, fromDeg });
+        glyphEl.textContent = '→'; // single base glyph, rotated via transform instead of swapping characters
+        glyphEl.style.transition = 'none';
+        glyphEl.style.transform = `rotate(${fromDeg}deg)`;
+        void glyphEl.offsetWidth; // forces layout so the browser registers the start angle before animating
+        glyphEl.style.transition = 'transform 0.5s ease';
+        glyphEl.style.transform = `rotate(${toDeg}deg)`;
+        animated.push({ glyphEl, fromDeg });
       }
     }
     if (!animated.length) {
-      showToast('Nothing revealed in this region yet to preview.');
+      showToast('Nothing revealed yet to preview.');
       return;
     }
-    showToast('🧭 Showing true directions for this region…');
+    showToast('🧭 Showing true directions…');
     setTimeout(() => {
-      animated.forEach(({ div, fromDeg }) => { div.style.transform = `rotate(${fromDeg}deg)`; });
+      animated.forEach(({ glyphEl, fromDeg }) => { glyphEl.style.transform = `rotate(${fromDeg}deg)`; });
       setTimeout(render, 550); // let the spin-back finish, then let the next render() restore normal glyphs
     }, 1600);
   }
 
   el.regionLegend.addEventListener('click', (e) => {
     const icon = e.target.closest('.region-rotation');
-    if (!icon || !state.regionRotation) return;
-    previewRegionRotation(Number(icon.dataset.regionId));
+    if (!icon || state.rotationSteps == null) return;
+    previewRotation();
   });
 
   el.newRoundBtn.addEventListener('click', () => {
@@ -1741,7 +1664,7 @@
     debugForcedTier = DEBUG_ROTATION_TEST_TIER;
     updateDebugPanel();
     startRound();
-    showToast('🧭 Each zone\'s arrows are rotated by a fixed amount, shown as a rotated icon in its legend entry - tap it to preview that zone\'s true directions.');
+    showToast('🧭 Every arrow on the board is rotated by a fixed amount, shown as the rotated icon above - tap it to preview the true directions.');
   });
   el.debugExitTestBtn.addEventListener('click', () => {
     debugForcedTier = null;
