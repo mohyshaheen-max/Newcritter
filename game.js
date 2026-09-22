@@ -1137,10 +1137,16 @@
     if (cell.status !== 'hidden') return;
     cell.flagged = !cell.flagged;
     if (cell.flagged && state.perm[r] === c) trackDailyQuestProgress('flag', 1);
-    if (cell.flagged && allCrittersFlaggedCorrectly()) {
+    const regionRevealed = revealCompletedRegions();
+    if (allCrittersFlaggedCorrectly()) {
       autoCompleteRound();
       return;
     }
+    if (regionRevealed.length) {
+      showToast('🧩 Region fully accounted for — remaining tiles revealed safely!');
+      if (state.revealed >= state.total) { winRound(); return; }
+    }
+    updateStats();
     render();
   }
 
@@ -1166,12 +1172,21 @@
       } else {
         state.lives--;
       }
+      const regionRevealed = revealCompletedRegions();
+      if (regionRevealed.length) {
+        // Attach to the history entry just pushed above, so useRewind() knows to put these
+        // specific cells back to hidden too - not just the tile that was actually tapped.
+        state.history[state.history.length - 1].regionRevealed = regionRevealed;
+        showToast('🧩 Region fully accounted for — remaining tiles revealed safely!');
+      }
       updateStats();
       render();
       if (state.lives <= 0) {
         offerContinue();
       } else if (allCrittersFlaggedCorrectly()) {
         autoCompleteRound();
+      } else if (regionRevealed.length && state.revealed >= state.total) {
+        winRound();
       }
     } else {
       cell.status = 'revealed';
@@ -1199,9 +1214,12 @@
     coins -= SNIFF_COST;
     state.cells[r][c] = { status: 'critter', flagged: false };
     trackDailyQuestProgress('powerup', 1);
+    const regionRevealed = revealCompletedRegions();
+    if (regionRevealed.length) showToast('🧩 Region fully accounted for — remaining tiles revealed safely!');
     updateStats();
     render();
     if (allCrittersFlaggedCorrectly()) autoCompleteRound();
+    else if (regionRevealed.length && state.revealed >= state.total) winRound();
   }
 
   function useRewind() {
@@ -1209,6 +1227,12 @@
     const last = state.history.pop();
     coins -= REWIND_COST;
     state.cells[last.r][last.c] = { status: 'hidden', flagged: false };
+    // Region Tiers: if this tap also auto-revealed the rest of a just-completed region (see
+    // revealCompletedRegions), those cells need putting back too - not just the tapped tile -
+    // or they'd stay 'revealed' on screen while state.revealed drops below the true count.
+    if (last.regionRevealed) {
+      for (const { r, c } of last.regionRevealed) state.cells[r][c] = { status: 'hidden', flagged: false };
+    }
     state.lives = last.lives;
     state.revealed = last.revealed;
     if (last.wardConsumed) lifeWardArmed = true; // undoing the tap it covered gives the ward back too
@@ -1536,6 +1560,7 @@
 
     el.streak.textContent = streak;
     updateDebugPanel();
+    renderRegionLegend();
     persistSave();
   }
 
@@ -1573,10 +1598,58 @@
     }
   }
 
-  // Region Tiers only - a color-swatch-to-count legend above the board, since cramming a number
+  // Region Tiers only - how many of each region's critters have been accounted for so far, via
+  // either a correct flag or an actual reveal (tap-loss, Sniff, autoComplete). Computed live on
+  // every call rather than cached, since it changes on every flag/tap - this is what turns the
+  // region count from a passive fact into an active Minesweeper-style counting tool: watch a
+  // region's found/target tally, and once it hits target you know every remaining hidden tile
+  // in it is safe (see revealCompletedRegions()) without needing an arrow to confirm it.
+  function regionFoundCounts() {
+    const counts = Array(state.regionCounts.length).fill(0);
+    if (!state.perm) return counts; // board not resolved yet - nothing can be "found"
+    for (let r = 0; r < state.n; r++) {
+      for (let c = 0; c < state.n; c++) {
+        if (state.perm[r] !== c) continue; // not a critter cell
+        const cell = state.cells[r][c];
+        if (cell.status === 'critter' || cell.flagged) counts[state.regionOf[r][c]]++;
+      }
+    }
+    return counts;
+  }
+
+  // Auto-reveals a region's remaining hidden tiles the instant every one of its critters has
+  // been accounted for - they're now provably safe, the same idea as
+  // allCrittersFlaggedCorrectly()/autoCompleteRound(), just scoped to one region instead of the
+  // whole board. This is the actual payoff for watching the tally: a region hitting found=target
+  // is a genuine, zero-risk deduction, not just a status update. Returns the list of {r,c} cells
+  // it revealed (empty if none) - tapCell() attaches this to its history entry so useRewind() can
+  // put these specific cells back to hidden too, not just the tile that was actually tapped.
+  function revealCompletedRegions() {
+    if (!state.regionOf || !state.regionCounts) return [];
+    const found = regionFoundCounts();
+    const revealedCells = [];
+    for (let regionId = 0; regionId < state.regionCounts.length; regionId++) {
+      if (found[regionId] !== state.regionCounts[regionId]) continue;
+      for (let r = 0; r < state.n; r++) {
+        for (let c = 0; c < state.n; c++) {
+          if (state.regionOf[r][c] !== regionId) continue;
+          const cell = state.cells[r][c];
+          if (cell.status === 'hidden' && !cell.flagged) {
+            cell.status = 'revealed';
+            state.revealed++;
+            revealedCells.push({ r, c });
+          }
+        }
+      }
+    }
+    return revealedCells;
+  }
+
+  // Region Tiers only - a color-swatch-to-tally legend above the board, since cramming a number
   // badge into an arbitrary cell of each region would collide with that cell's own arrow/flag/
-  // critter content. Counts are fixed for the whole round (unlike arrows, discovered as you go),
-  // so this only needs to run once per startRound(), not on every render().
+  // critter content. found/target updates live as the round is played (see regionFoundCounts) -
+  // called from updateStats() and startRound(), not on every render(), since revealing a plain
+  // safe tile doesn't change any region's tally.
   function renderRegionLegend() {
     if (!state.regionOf || !state.regionCounts) {
       el.regionLegend.classList.add('hidden');
@@ -1584,18 +1657,34 @@
       return;
     }
     el.regionLegend.classList.remove('hidden');
+    const found = regionFoundCounts();
     el.regionLegend.innerHTML = state.regionCounts.map((count, id) => {
       // Rotating Compass only - shows that region's fixed rotation as a rotated arrow glyph, so
       // the info is always checkable (never hidden), same fairness bar as everything else here.
+      // Tappable (see the click handler below) since the icon alone doesn't explain the rule.
       const rotation = state.regionRotation
-        ? `<span class="region-rotation" style="transform: rotate(${state.regionRotation[id] * 45}deg)">↑</span>`
+        ? `<span class="region-rotation" data-region-id="${id}" style="transform: rotate(${state.regionRotation[id] * 45}deg)">↑</span>`
         : '';
+      const complete = found[id] >= count;
       return `
       <span class="region-swatch" style="background: ${REGION_COLORS[id % REGION_COLORS.length]}"></span
-      >${rotation}<span class="region-count">${count}</span>
+      >${rotation}<span class="region-count${complete ? ' region-complete' : ''}">${found[id]}/${count}${complete ? ' ✓' : ''}</span>
     `;
     }).join('');
   }
+
+  // Rotating Compass only - tapping a region's rotation icon re-explains the rule, since the icon
+  // alone doesn't communicate anything on its own (the whole reason this exists - see chat).
+  el.regionLegend.addEventListener('click', (e) => {
+    const icon = e.target.closest('.region-rotation');
+    if (!icon || !state.regionRotation) return;
+    const id = Number(icon.dataset.regionId);
+    const steps = state.regionRotation[id];
+    const degrees = steps * 45;
+    showToast(degrees === 0
+      ? `🧭 This region's compass is TRUE - arrows here point the real direction, no adjustment needed.`
+      : `🧭 This region's compass is rotated ${degrees}°. Arrows here are offset - rotate what you see backward by ${degrees}° to find the real direction.`);
+  });
 
   el.newRoundBtn.addEventListener('click', () => {
     el.winOverlay.classList.add('hidden');
@@ -1702,11 +1791,13 @@
     debugForcedTier = DEBUG_REGION_TEST_TIER;
     updateDebugPanel();
     startRound();
+    showToast('🧩 Each region\'s legend shows found/target critters — flag or reveal them all and the rest of that region auto-reveals as safe.');
   });
   el.debugRotationTestBtn.addEventListener('click', () => {
     debugForcedTier = DEBUG_ROTATION_TEST_TIER;
     updateDebugPanel();
     startRound();
+    showToast('🧭 Each region\'s arrows are rotated by a fixed amount, shown as a rotated icon in its legend entry (tap it anytime) — rotate what you see backward by that much to find the real direction.');
   });
   el.debugExitTestBtn.addEventListener('click', () => {
     debugForcedTier = null;

@@ -142,12 +142,14 @@ h1 {
   border: 1px solid var(--border);
 }
 /* Rotating Compass only - a small rotated arrow next to a region's swatch, showing that
-   region's fixed rotation for the round (see game.js renderRegionLegend). */
+   region's fixed rotation for the round (see game.js renderRegionLegend). Tappable to re-explain
+   the rule (see the click handler in game.js) - the icon alone doesn't communicate anything. */
 .region-rotation {
   display: inline-block;
   font-size: 0.8rem;
   margin: 0 2px;
   transform-origin: center;
+  cursor: pointer;
 }
 .region-count {
   display: inline-flex;
@@ -161,6 +163,13 @@ h1 {
   font-size: 0.85rem;
   font-weight: 700;
   box-shadow: 0 2px 6px var(--shadow);
+}
+/* A region whose found tally has hit its target - every critter in it is accounted for, so its
+   remaining hidden tiles get auto-revealed (see revealCompletedRegions in game.js). */
+.region-count.region-complete {
+  background: var(--success);
+  color: var(--panel);
+  border-color: var(--success);
 }
 
 .board-frame {
