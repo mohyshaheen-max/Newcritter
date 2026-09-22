@@ -31,29 +31,40 @@
   }
   const TOTAL_LEVELS = TIERS.length * TIER_WINS_REQUIRED;
 
-  // --- Region Tiers (2026-09-22): the actual answer to "the ladder is boring past level 36" ---
+  // --- Rotation Tiers (2026-09-22, replacing Region Tiers) - the answer to "the ladder is
+  // boring past level 36" ---
   // Bigger grids/more critters can't fix that on their own - TIERS' own top step (8x8, 8
   // critters) is already a full permutation (one critter per row AND column), the densest board
-  // this placement model can produce; there's no "harder" left inside that one mechanic. Region
-  // Tiers is a genuinely different puzzle layered on top, not more of the same: the board is
-  // split into colored regions, each showing exactly how many critters it contains - a second,
-  // independent clue (a count, not a direction) the player cross-references against the arrow/
-  // tie clues. Reuses the identical (gridSize, critterCount) generation pipeline as the classic
-  // ladder - same placement model, same uniqueness check, same tie-bias - so there's no new
-  // generation-performance risk; region partitioning and region-count derivation are the only
-  // new pieces. A small pilot (4 tiers) rather than a full new ladder, to prove the mechanic
-  // generates well and is fun before investing in more - see buildRegionRoundSetup below for
-  // how region counts stay knowable before the first tap despite the free first-tap-safety
-  // guarantee (perm isn't otherwise chosen until then).
-  const REGION_TIERS = [
-    { gridSize: 8, critterCount: 6, regionCount: 5 },
-    { gridSize: 8, critterCount: 7, regionCount: 4 },
-    { gridSize: 8, critterCount: 8, regionCount: 4 },
-    { gridSize: 8, critterCount: 8, regionCount: 3 },
+  // this placement model can produce; there's no "harder" left inside that one mechanic.
+  //
+  // First attempt was Region Tiers: split the board into colored zones, each showing exactly how
+  // many critters it contains, as a second clue to cross-reference against arrows. Scrapped the
+  // same day after direct tester feedback across several fix attempts (live tally, then a real
+  // exploit from that tally, then Fog Tiers) all converged on the same conclusion: a region count
+  // never actually became necessary to solve the board, and even with fog forcing it to matter in
+  // the strict provable sense, it didn't change how playing felt - a bare count only narrows down
+  // *how many* critters remain, never *where*, so the endgame was still closer to a guess than a
+  // deduction. See compass-critters-spec.md's Difficulty progression section for the full history.
+  //
+  // What replaces it: the same board is split into zones, but instead of a critter-count clue,
+  // each zone has its own fixed rotation - a tile's displayed arrow is rotated by the rotation of
+  // the zone the TILE is in, never the critter's. This still reuses the identical
+  // (gridSize, critterCount) generation pipeline as the classic ladder completely unchanged, since
+  // rotation is purely a render-time relabeling (see rotateGlyph) with zero effect on solvability
+  // - simpler to generate than Region Tiers was, since there's no count vector to match candidates
+  // against anymore. Difficulty ramps by zone count (3 -> 5): more zones means more independent
+  // rotations to track simultaneously, which is what makes this a real difficulty lever rather
+  // than the "read one number, do one subtraction" version that was correctly called out as
+  // ridiculous to use - see previewRegionRotation below for the visual (not arithmetic) fix.
+  const ROTATION_TIERS = [
+    { gridSize: 8, critterCount: 6, regionCount: 3, rotationEnabled: true },
+    { gridSize: 8, critterCount: 7, regionCount: 4, rotationEnabled: true },
+    { gridSize: 8, critterCount: 8, regionCount: 4, rotationEnabled: true },
+    { gridSize: 8, critterCount: 8, regionCount: 5, rotationEnabled: true },
   ];
-  // Low-opacity tints applied per-cell via box-shadow (see render()) so region boundaries show
+  // Low-opacity tints applied per-cell via box-shadow (see render()) so zone boundaries show
   // through whatever the cell's normal hidden/revealed/flagged background already is, without
-  // fighting that CSS. One per REGION_TIERS' largest regionCount.
+  // fighting that CSS. One per ROTATION_TIERS' largest regionCount.
   const REGION_COLORS = [
     'rgba(220, 80, 80, 0.22)',
     'rgba(70, 130, 220, 0.22)',
@@ -106,9 +117,7 @@
     streak: document.getElementById('streakVal'),
     debugAdvanceDayBtn: document.getElementById('debugAdvanceDayBtn'),
     debugDateVal: document.getElementById('debugDateVal'),
-    debugRegionTestBtn: document.getElementById('debugRegionTestBtn'),
     debugRotationTestBtn: document.getElementById('debugRotationTestBtn'),
-    debugFogTestBtn: document.getElementById('debugFogTestBtn'),
     debugExitTestBtn: document.getElementById('debugExitTestBtn'),
     debugTestModeVal: document.getElementById('debugTestModeVal'),
     debugResetBtn: document.getElementById('debugResetBtn'),
@@ -166,39 +175,36 @@
   // advancing); no demotion on a loss. Both persisted, since it's overall progress.
   let tierIndex = 0;
   let tierWins = 0;
-  // Same pattern as tierIndex/tierWins, but for Region Tiers - only ever advances once
+  // Same pattern as tierIndex/tierWins, but for Rotation Tiers - only ever advances once
   // isEndlessMode() is true (the classic ladder is maxed out). Stops advancing once it reaches
-  // REGION_TIERS' last entry (mirrors how tierIndex itself stops at TIERS.length - 1) - that
+  // ROTATION_TIERS' last entry (mirrors how tierIndex itself stops at TIERS.length - 1) - that
   // last tier then just repeats indefinitely as the new Endless Mode.
-  let regionTierIndex = 0;
-  let regionTierWins = 0;
+  let rotationTierIndex = 0;
+  let rotationTierWins = 0;
 
-  // Debug-only test boards (2026-09-22): dedicated entry points so Region Tiers and the still-
-  // experimental Rotating Compass mechanic (see rotateGlyph below) can be tested directly, on
-  // demand, without clearing the 36-level ladder and without touching real ladder/Region Tier
-  // progress. debugForcedTier is deliberately NOT persisted anywhere - a reload always drops
+  // Debug-only test board (2026-09-22): a dedicated entry point so Rotation Tiers can be tested
+  // directly, on demand, without clearing the 36-level ladder and without touching real ladder/
+  // tier progress. debugForcedTier is deliberately NOT persisted anywhere - a reload always drops
   // back to wherever the player's real save actually is, so there's no way this leaves a trace.
   // Every persistent side effect a normal round has (coins, streak, leaderboard, daily quests,
-  // ladder/region-tier advance) is skipped for as long as this is set - see winRound(),
+  // ladder/rotation-tier advance) is skipped for as long as this is set - see winRound(),
   // trackDailyQuestProgress(), and the continueDeclineBtn handler below.
-  const DEBUG_REGION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4 };
   const DEBUG_ROTATION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4, rotationEnabled: true };
-  const DEBUG_FOG_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4, fogEnabled: true };
   let debugForcedTier = null;
 
   function currentTier() {
     if (debugForcedTier) return debugForcedTier;
     return isEndlessMode()
-      ? REGION_TIERS[Math.min(regionTierIndex, REGION_TIERS.length - 1)]
+      ? ROTATION_TIERS[Math.min(rotationTierIndex, ROTATION_TIERS.length - 1)]
       : TIERS[Math.min(tierIndex, TIERS.length - 1)];
   }
   // True once the ladder's last difficulty step is reached - there's nothing left to advance
-  // to in TIERS, so every subsequent round is a Region Tier instead (see below), and once those
+  // to in TIERS, so every subsequent round is a Rotation Tier instead (see below), and once those
   // are exhausted too, the last one repeats indefinitely as Endless Mode.
   function isEndlessMode() { return tierIndex >= TIERS.length - 1; }
-  // True only while there's still a next Region Tier left to unlock - distinguishes "climbing
-  // the region ladder" from "fully unlocked, now just repeating the hardest one" for display text.
-  function regionTiersUnlocking() { return isEndlessMode() && regionTierIndex < REGION_TIERS.length - 1; }
+  // True only while there's still a next Rotation Tier left to unlock - distinguishes "climbing
+  // the rotation ladder" from "fully unlocked, now just repeating the hardest one" for display text.
+  function rotationTiersUnlocking() { return isEndlessMode() && rotationTierIndex < ROTATION_TIERS.length - 1; }
 
   // Power-ups intro: shown once, the first time a player clears a tier (see winRound). Set when
   // that happens and consumed by the win overlay's "Next round" handler, which shows the intro
@@ -306,19 +312,19 @@
   // changes: it just looks up wherever that (gridSize, critterCount) pair lives now.
   function persistSave() {
     try {
-      // Deliberately NOT currentTier() here: several REGION_TIERS entries reuse the exact same
+      // Deliberately NOT currentTier() here: several ROTATION_TIERS entries reuse the exact same
       // (gridSize, critterCount) pair as an *earlier* TIERS entry (8x8/6 and 8x8/7 both already
       // exist partway up the classic ladder), so saving whatever's currently displayed would
       // make loadFromSave()'s lookup below land on that earlier TIERS index instead of the
-      // ladder's actual last one - silently demoting a Region Tier player out of Endless Mode on
+      // ladder's actual last one - silently demoting a Rotation Tier player out of Endless Mode on
       // reload. This always saves the *classic* tier position (pinned at the ladder's end once
-      // isEndlessMode() is true), independent of which REGION_TIERS entry is on screen.
+      // isEndlessMode() is true), independent of which ROTATION_TIERS entry is on screen.
       const classicTier = TIERS[Math.min(tierIndex, TIERS.length - 1)];
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         version: 3, coins, streak, lastExtendDate, lastDecidedDate,
         tierGridSize: classicTier.gridSize, tierCritterCount: classicTier.critterCount, tierWins,
         streakShieldArmed, lifeWardArmed, totalWins, endlessStreak, bestEndlessStreak, endlessWinsTotal,
-        regionTierIndex, regionTierWins,
+        rotationTierIndex, rotationTierWins,
       }));
     } catch (err) { /* storage unavailable - game still works in-memory for this session */ }
   }
@@ -334,8 +340,8 @@
     if (typeof saved.endlessStreak === 'number') endlessStreak = saved.endlessStreak;
     if (typeof saved.bestEndlessStreak === 'number') bestEndlessStreak = saved.bestEndlessStreak;
     if (typeof saved.endlessWinsTotal === 'number') endlessWinsTotal = saved.endlessWinsTotal;
-    if (typeof saved.regionTierIndex === 'number') regionTierIndex = Math.max(0, Math.min(saved.regionTierIndex, REGION_TIERS.length - 1));
-    if (typeof saved.regionTierWins === 'number') regionTierWins = saved.regionTierWins;
+    if (typeof saved.rotationTierIndex === 'number') rotationTierIndex = Math.max(0, Math.min(saved.rotationTierIndex, ROTATION_TIERS.length - 1));
+    if (typeof saved.rotationTierWins === 'number') rotationTierWins = saved.rotationTierWins;
     if (saved.version === 3 && typeof saved.tierGridSize === 'number') {
       let idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize && t.critterCount === saved.tierCritterCount);
       if (idx < 0) idx = TIERS.findIndex(t => t.gridSize === saved.tierGridSize); // that exact count no longer exists at this size - land on the size's first tier instead
@@ -829,18 +835,10 @@
   // permB's clue values are computed lazily per cell (not a precomputed grid) so a mismatch
   // on an early cell - the common case for two random permutations - exits without ever
   // computing the rest of permB's grid.
-  //
-  // fogOf (optional, Fog Tiers only) additionally skips any cell the player never actually gets
-  // shown a clue for - the exact same "what does the player get to see" principle that already
-  // applies to critter cells, just extended to foggy ones. This is what makes fog fair rather
-  // than a guess: uniqueness is checked against the real visible picture (non-fog arrows/ties
-  // plus the region count, which the candidate space is already filtered to match - see
-  // buildRegionRoundSetup), not the full board the player never gets to see.
-  function isConfusablePair(permA, gridA, permB, n, fogOf) {
+  function isConfusablePair(permA, gridA, permB, n) {
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
         if (permA[r] === c || permB[r] === c) continue;
-        if (fogOf && fogOf[r][c]) continue;
         const wedges = nearestWedges(permB, n, r, c);
         const value = wedges.length > 1 ? TIE : ARROWS[wedges[0]];
         if (gridA[r][c] !== value) return false;
@@ -849,10 +847,10 @@
     return true;
   }
 
-  function hasUniqueSolution(perm, grid, allPerms, n, fogOf) {
+  function hasUniqueSolution(perm, grid, allPerms, n) {
     for (const other of allPerms) {
       if (other === perm) continue;
-      if (isConfusablePair(perm, grid, other, n, fogOf)) return false;
+      if (isConfusablePair(perm, grid, other, n)) return false;
     }
     return true;
   }
@@ -885,7 +883,7 @@
     return sorted.slice(start, start + windowSize).map(w => w.entry);
   }
 
-  function buildUniqueSolutionPool(n, c, candidateSpace, fogOf) {
+  function buildUniqueSolutionPool(n, c, candidateSpace) {
     const allPerms = candidateSpace || getPlacementSpace(n, c);
     const poolTarget = Math.min(30, allPerms.length);
     const maxAttempts = poolTarget * 40;
@@ -899,13 +897,7 @@
       tried.add(idx);
       const perm = allPerms[idx];
       const grid = computeClueGrid(perm, n);
-      // allPerms is the comparison universe uniqueness is checked against - passing a Region
-      // Tier's region-count-filtered subset here (see buildRegionRoundSetup) means a candidate
-      // only needs to be distinguishable from OTHER placements sharing the same region counts,
-      // which is exactly correct: a placement with different region counts is already
-      // distinguishable via that clue alone, so it doesn't belong in the comparison at all.
-      // fogOf (Fog Tiers only) narrows what's comparable even further - see isConfusablePair.
-      if (hasUniqueSolution(perm, grid, allPerms, n, fogOf)) pool.push({ perm, grid });
+      if (hasUniqueSolution(perm, grid, allPerms, n)) pool.push({ perm, grid });
     }
     if (!pool.length) {
       const perm = allPerms[Math.floor(Math.random() * allPerms.length)];
@@ -917,7 +909,8 @@
   // Randomized territory-growth partition: seed `regionCount` cells, then round-robin each
   // region claiming a random unclaimed neighbor until the whole board is covered. Not a
   // rigorously balanced partition (some regions end up bigger than others), which is fine here -
-  // region *shape* carries no gameplay meaning, only each region's final critter count does.
+  // region shape carries no gameplay meaning, only which zone each tile belongs to (for Rotating
+  // Compass's rotation-per-zone rule) does.
   function partitionIntoRegions(n, regionCount) {
     const regionOf = Array.from({ length: n }, () => Array(n).fill(null));
     const frontier = Array.from({ length: regionCount }, () => []);
@@ -966,97 +959,24 @@
     return regionOf;
   }
 
-  function regionCountsFor(perm, regionOf, regionCount) {
-    const counts = Array(regionCount).fill(0);
-    perm.forEach((col, row) => { if (col !== null) counts[regionOf[row][col]]++; });
-    return counts;
+  // Splits the board into `regionCount` zones purely for Rotating Compass's benefit - no critter-
+  // count clue involved (that was Region Tiers, scrapped 2026-09-22 - see the ROTATION_TIERS
+  // comment up top for why). Since rotation is a pure render-time relabeling with zero effect on
+  // solvability (see rotateGlyph), this needs none of the region-count-vector matching the old
+  // version did - it's just the zone partition plus each zone's fixed rotation.
+  function buildRotationZoneSetup(n, regionCount) {
+    return { regionOf: partitionIntoRegions(n, regionCount), regionRotation: assignRegionRotations(regionCount) };
   }
 
-  // Region counts need to be knowable and shown from the moment the round starts (like any
-  // upfront puzzle clue - they don't get discovered progressively the way arrows do), but which
-  // exact placement the round uses isn't chosen until the first tap (see resolveFirstTap - kept
-  // that way so the free first-tap-safety guarantee still holds for Region Tiers too). Resolved
-  // by fixing the region-count vector first, from one random valid placement, then restricting
-  // the whole candidate pool resolveFirstTap() later draws from to placements matching that
-  // exact vector - so whichever candidate ends up chosen, the counts shown upfront are already
-  // correct for it. On the rare board where no vector has enough matching candidates after a few
-  // tries, falls back to the unfiltered space - the round still works, it just can't show counts
-  // until after the first tap that round.
-  //
-  // fogEnabled (Fog Tiers, debug pilot 2026-09-22) layers fog on top of this, once a valid
-  // region-count vector is found - see pickFogCells/fogIsSolvable below for how fog stays
-  // provably solvable rather than becoming a real guess.
-  function buildRegionRoundSetup(n, critterCount, regionCount, fogEnabled) {
-    const regionOf = partitionIntoRegions(n, regionCount);
-    const allPerms = getPlacementSpace(n, critterCount);
-    const poolTarget = Math.min(30, allPerms.length);
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const seed = allPerms[Math.floor(Math.random() * allPerms.length)];
-      const targetCounts = regionCountsFor(seed, regionOf, regionCount);
-      const key = targetCounts.join(',');
-      const matching = allPerms.filter(perm => regionCountsFor(perm, regionOf, regionCount).join(',') === key);
-      if (matching.length < Math.min(5, poolTarget)) continue;
-      if (!fogEnabled) return { regionOf, regionCounts: targetCounts, candidateSpace: matching, fogOf: null };
-      // Try fog at decreasing density, then no fog at all, rather than ever shipping a board
-      // whose fog cells aren't actually resolvable - the "no unfair guessing" guarantee is never
-      // weakened for fog, fog is just opportunistic on top of it.
-      for (const fogCap of [3, 2, 1, 0]) {
-        if (fogCap === 0) return { regionOf, regionCounts: targetCounts, candidateSpace: matching, fogOf: null };
-        const fogOf = pickFogCells(regionOf, n, regionCount, fogCap);
-        if (fogIsSolvable(matching, n, fogOf)) return { regionOf, regionCounts: targetCounts, candidateSpace: matching, fogOf };
-      }
-    }
-    return { regionOf, regionCounts: null, candidateSpace: allPerms, fogOf: null };
-  }
-
-  // Picks up to fogCap cells per region (min 1, ~20% of that region's size, whichever is
-  // smaller) to show no arrow/tie at all when revealed - see the .fog rendering in render() and
-  // the fog-aware uniqueness check in isConfusablePair. Purely a property of the region layout,
-  // not of any specific critter placement - decided before a placement is even chosen, same as
-  // regionOf itself.
-  function pickFogCells(regionOf, n, regionCount, fogCap) {
-    const fogOf = Array.from({ length: n }, () => Array(n).fill(false));
-    for (let regionId = 0; regionId < regionCount; regionId++) {
-      const cells = [];
-      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (regionOf[r][c] === regionId) cells.push([r, c]);
-      const target = Math.min(fogCap, Math.max(1, Math.round(cells.length * 0.2)));
-      shuffledIndices(cells.length).slice(0, target).forEach((idx) => {
-        const [r, c] = cells[idx];
-        fogOf[r][c] = true;
-      });
-    }
-    return fogOf;
-  }
-
-  // Whether AT LEAST ONE candidate in `matching` still has a provably unique solution once fogOf
-  // is applied - a real, bounded search (same sampling-not-exhaustive approach as
-  // buildUniqueSolutionPool, for the same performance reason: matching can be large, and
-  // checking every candidate against every other is quadratic), not an assumption. If nothing
-  // in the sample works, the caller tries less fog rather than risking an unfair board.
-  function fogIsSolvable(matching, n, fogOf) {
-    const budget = Math.min(30, matching.length) * 3;
-    const tried = new Set();
-    let checks = 0;
-    while (checks < budget && tried.size < matching.length) {
-      checks++;
-      const idx = Math.floor(Math.random() * matching.length);
-      if (tried.has(idx)) continue;
-      tried.add(idx);
-      const perm = matching[idx];
-      if (hasUniqueSolution(perm, computeClueGrid(perm, n), matching, n, fogOf)) return true;
-    }
-    return false;
-  }
-
-  // --- Rotating Compass (debug pilot, locked design 2026-09-22, not yet on the real ladder) ---
-  // A region-modifier layered on top of Region Tiers, not a new placement/generation mechanic -
-  // the underlying perm/clue grid is generated exactly as always. Each region gets its own fixed
-  // rotation for the round (0/90/180/270deg only - "steps" below are counted in 45deg wedge
-  // units, so a step of 2 is a clean 90deg). THE RULE: a tile's displayed arrow is rotated by the
-  // rotation of the region the TILE ITSELF is in, never the critter's region - that's what forces
-  // tracking multiple independent offsets instead of one global fact (see the design discussion).
-  // Nothing here is ever hidden - render-time only, the true clue/perm never changes, so it stays
-  // exactly as fair as every other tier.
+  // --- Rotating Compass (locked design 2026-09-22, now the real post-ladder mechanic) ---
+  // Each zone gets its own fixed rotation for the round (0/90/180/270deg only - "steps" below are
+  // counted in 45deg wedge units, so a step of 2 is a clean 90deg). THE RULE: a tile's displayed
+  // arrow is rotated by the rotation of the zone the TILE ITSELF is in, never the critter's zone -
+  // that's what forces tracking multiple independent offsets instead of one global fact (see the
+  // design discussion in the spec). Nothing here is ever hidden - render-time only, the true clue/
+  // perm never changes, so it stays exactly as fair as every other tier, and doesn't need any of
+  // the uniqueness-check changes Region Tiers/Fog Tiers needed - the classic ladder's generation
+  // pipeline is reused completely unchanged.
   const ROTATION_STEPS = [0, 2, 4, 6];
   function assignRegionRotations(regionCount) {
     return Array.from({ length: regionCount }, () => ROTATION_STEPS[Math.floor(Math.random() * ROTATION_STEPS.length)]);
@@ -1073,13 +993,11 @@
     const n = tier.gridSize;
     const critterCount = tier.critterCount;
     document.documentElement.style.setProperty('--grid-size', n);
-    const regionSetup = tier.regionCount ? buildRegionRoundSetup(n, critterCount, tier.regionCount, tier.fogEnabled) : null;
+    const zoneSetup = tier.regionCount ? buildRotationZoneSetup(n, tier.regionCount) : null;
     state = {
       n,
       critterCount,
-      pool: regionSetup
-        ? buildUniqueSolutionPool(n, critterCount, regionSetup.candidateSpace, regionSetup.fogOf)
-        : buildUniqueSolutionPool(n, critterCount),
+      pool: buildUniqueSolutionPool(n, critterCount),
       perm: null,
       grid: null,
       firstTapDone: false,
@@ -1091,22 +1009,19 @@
       history: [],
       pulseArmed: false,
       decodeArmed: false,
-      regionOf: regionSetup ? regionSetup.regionOf : null,
-      regionCounts: regionSetup ? regionSetup.regionCounts : null,
-      regionRotation: (regionSetup && tier.rotationEnabled) ? assignRegionRotations(tier.regionCount) : null,
-      fogOf: regionSetup ? regionSetup.fogOf : null,
+      regionOf: zoneSetup ? zoneSetup.regionOf : null,
+      regionRotation: zoneSetup ? zoneSetup.regionRotation : null,
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
-    const regionSuffix = tier.regionCount ? `, ${tier.regionCount} regions` : '';
-    const fogSuffix = state.fogOf ? ' · foggy' : (tier.fogEnabled ? ' · fog unavailable this board' : '');
+    const zoneSuffix = tier.regionCount ? `, ${tier.regionCount} zones` : '';
     el.level.textContent = debugForcedTier
-      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters${regionSuffix}${tier.rotationEnabled ? ' · rotating' : ''}${fogSuffix} (nothing here is saved)`
+      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters${zoneSuffix} (nothing here is saved)`
       : !isEndlessMode()
         ? `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`
-        : regionTiersUnlocking()
-          ? `🧩 Region Tier ${regionTierIndex + 1}/${REGION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters${regionSuffix}`
-          : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters${regionSuffix}`;
+        : rotationTiersUnlocking()
+          ? `🧭 Rotation Tier ${rotationTierIndex + 1}/${ROTATION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters${zoneSuffix}`
+          : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters${zoneSuffix}`;
     renderRegionLegend();
     updateStats();
     render();
@@ -1115,23 +1030,7 @@
   function resolveFirstTap(r, c) {
     let candidates = state.pool.filter(({ perm }) => perm[r] !== c);
     if (!candidates.length) {
-      let space = getPlacementSpace(state.n, state.critterCount).filter(p => p[r] !== c);
-      // In a Region Tier, prefer whatever survives that also still matches the region counts
-      // already shown to the player (see buildRegionRoundSetup) - only fall through to a
-      // genuinely unfiltered pick if literally nothing satisfies both, which would mean the
-      // displayed counts can't be honored no matter what.
-      if (state.regionOf && state.regionCounts) {
-        const key = state.regionCounts.join(',');
-        const stillMatching = space.filter(p => regionCountsFor(p, state.regionOf, state.regionCounts.length).join(',') === key);
-        if (stillMatching.length) space = stillMatching;
-      }
-      // Fog Tiers: same best-effort spirit as the region-count filter just above - prefer
-      // whatever's still provably unique under the fog already shown, only falling back to the
-      // wider set if this extremely rare fallback-within-a-fallback finds nothing at all.
-      if (state.fogOf) {
-        const stillUnique = space.filter(p => hasUniqueSolution(p, computeClueGrid(p, state.n), space, state.n, state.fogOf));
-        if (stillUnique.length) space = stillUnique;
-      }
+      const space = getPlacementSpace(state.n, state.critterCount).filter(p => p[r] !== c);
       candidates = space.map(p => ({ perm: p, grid: computeClueGrid(p, state.n) }));
     }
     const choice = candidates[Math.floor(Math.random() * candidates.length)];
@@ -1209,16 +1108,10 @@
     if (cell.status !== 'hidden') return;
     cell.flagged = !cell.flagged;
     if (cell.flagged && state.perm[r] === c) trackDailyQuestProgress('flag', 1);
-    const regionRevealed = revealCompletedRegions();
-    if (allCrittersFlaggedCorrectly()) {
+    if (cell.flagged && allCrittersFlaggedCorrectly()) {
       autoCompleteRound();
       return;
     }
-    if (regionRevealed.length) {
-      showToast('🧩 Region fully accounted for — remaining tiles revealed safely!');
-      if (state.revealed >= state.total) { winRound(); return; }
-    }
-    updateStats();
     render();
   }
 
@@ -1244,21 +1137,12 @@
       } else {
         state.lives--;
       }
-      const regionRevealed = revealCompletedRegions();
-      if (regionRevealed.length) {
-        // Attach to the history entry just pushed above, so useRewind() knows to put these
-        // specific cells back to hidden too - not just the tile that was actually tapped.
-        state.history[state.history.length - 1].regionRevealed = regionRevealed;
-        showToast('🧩 Region fully accounted for — remaining tiles revealed safely!');
-      }
       updateStats();
       render();
       if (state.lives <= 0) {
         offerContinue();
       } else if (allCrittersFlaggedCorrectly()) {
         autoCompleteRound();
-      } else if (regionRevealed.length && state.revealed >= state.total) {
-        winRound();
       }
     } else {
       cell.status = 'revealed';
@@ -1286,12 +1170,9 @@
     coins -= SNIFF_COST;
     state.cells[r][c] = { status: 'critter', flagged: false };
     trackDailyQuestProgress('powerup', 1);
-    const regionRevealed = revealCompletedRegions();
-    if (regionRevealed.length) showToast('🧩 Region fully accounted for — remaining tiles revealed safely!');
     updateStats();
     render();
     if (allCrittersFlaggedCorrectly()) autoCompleteRound();
-    else if (regionRevealed.length && state.revealed >= state.total) winRound();
   }
 
   function useRewind() {
@@ -1299,12 +1180,6 @@
     const last = state.history.pop();
     coins -= REWIND_COST;
     state.cells[last.r][last.c] = { status: 'hidden', flagged: false };
-    // Region Tiers: if this tap also auto-revealed the rest of a just-completed region (see
-    // revealCompletedRegions), those cells need putting back too - not just the tapped tile -
-    // or they'd stay 'revealed' on screen while state.revealed drops below the true count.
-    if (last.regionRevealed) {
-      for (const { r, c } of last.regionRevealed) state.cells[r][c] = { status: 'hidden', flagged: false };
-    }
     state.lives = last.lives;
     state.revealed = last.revealed;
     if (last.wardConsumed) lifeWardArmed = true; // undoing the tap it covered gives the ward back too
@@ -1395,11 +1270,7 @@
 
   function useDecodeAt(r, c) {
     const cell = state.cells[r][c];
-    const foggy = state.fogOf && state.fogOf[r][c];
-    // A foggy tile never actually shows a ✦ to begin with (see render()) - it always displays
-    // fog regardless of what its true clue is, so there's nothing here to have selected. Without
-    // this guard, Decode could reach through the fog and reveal the exact info fog exists to hide.
-    if (foggy || cell.status !== 'revealed' || state.grid[r][c] !== TIE) {
+    if (cell.status !== 'revealed' || state.grid[r][c] !== TIE) {
       showToast('Decode only works on a revealed ✦ tile.');
       return;
     }
@@ -1436,7 +1307,7 @@
   function winRound() {
     state.roundOver = true;
     // Debug test board: acknowledge the win but touch nothing persistent - no coins, streak,
-    // leaderboard, daily quests, or ladder/Region Tier advance. Dismissing this overlay
+    // leaderboard, daily quests, or ladder/Rotation Tier advance. Dismissing this overlay
     // regenerates another board of the same forced tier (currentTier()'s override), not
     // whatever the player's real progress would normally serve next.
     if (debugForcedTier) {
@@ -1463,19 +1334,19 @@
     }
 
     const wasAtLastTier = isEndlessMode();
-    const wasUnlockingRegionTier = regionTiersUnlocking();
+    const wasUnlockingRotationTier = rotationTiersUnlocking();
     if (wasAtLastTier) {
       endlessStreak++;
       endlessWinsTotal++;
       if (endlessStreak > bestEndlessStreak) bestEndlessStreak = endlessStreak;
-      // Region Tier advance: only while there's still a next one to unlock (mirrors the
-      // tierIndex advance below) - once regionTierIndex reaches REGION_TIERS' last entry it
+      // Rotation Tier advance: only while there's still a next one to unlock (mirrors the
+      // tierIndex advance below) - once rotationTierIndex reaches ROTATION_TIERS' last entry it
       // just stays there, repeating indefinitely as the new Endless Mode.
-      if (wasUnlockingRegionTier) {
-        regionTierWins++;
-        if (regionTierWins >= TIER_WINS_REQUIRED) {
-          regionTierIndex++;
-          regionTierWins = 0;
+      if (wasUnlockingRotationTier) {
+        rotationTierWins++;
+        if (rotationTierWins >= TIER_WINS_REQUIRED) {
+          rotationTierIndex++;
+          rotationTierWins = 0;
         }
       }
     }
@@ -1491,8 +1362,8 @@
       // change, checking `tierIndex === 1` wouldn't be.
       if (shouldShowPowerupsIntro()) pendingPowerupsIntro = true;
       // Endless Mode intro: fires exactly once, the moment this win pushes tierIndex onto the
-      // ladder's last difficulty step for the first time ever - now explains Region Tiers, since
-      // that's what immediately begins from here (see the overlay copy in index.html).
+      // ladder's last difficulty step for the first time ever - now explains Rotation Tiers,
+      // since that's what immediately begins from here (see the overlay copy in index.html).
       if (isEndlessMode() && shouldShowEndlessModeIntro()) pendingEndlessModeIntro = true;
     }
     const tier = currentTier();
@@ -1504,13 +1375,13 @@
       // Every win advances the displayed level number by exactly one, whether or not the
       // underlying difficulty step (tier) also changed this round - see the ladder comment up
       // top for why the two are deliberately decoupled. Once past the classic ladder, framing
-      // switches to Region Tier unlock progress, then finally to pure Endless Mode once all of
-      // those are unlocked too - see currentTier()/regionTiersUnlocking() above.
-      const regionSuffix = tier.regionCount ? `, ${tier.regionCount} regions` : '';
+      // switches to Rotation Tier unlock progress, then finally to pure Endless Mode once all of
+      // those are unlocked too - see currentTier()/rotationTiersUnlocking() above.
+      const zoneSuffix = tier.regionCount ? `, ${tier.regionCount} zones` : '';
       const progressText = !wasAtLastTier
         ? `Level ${displayLevel()}/${TOTAL_LEVELS} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critter${tier.critterCount === 1 ? '' : 's'})!`
-        : wasUnlockingRegionTier
-          ? `🧩 Region Tier ${regionTierIndex + 1}/${REGION_TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critters${regionSuffix}) — win streak ${endlessStreak} (best ${bestEndlessStreak})`
+        : wasUnlockingRotationTier
+          ? `🧭 Rotation Tier ${rotationTierIndex + 1}/${ROTATION_TIERS.length} unlocked (${tier.gridSize}×${tier.gridSize}, ${tier.critterCount} critters${zoneSuffix}) — win streak ${endlessStreak} (best ${bestEndlessStreak})`
           : `♾️ Endless Mode — win streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins`;
       // The round just played may have run under a HIGHER life cap than currentMaxLives() now
       // reflects - if this win just advanced tierIndex into Endless Mode, the cap has already
@@ -1646,29 +1517,21 @@
       for (let c = 0; c < state.n; c++) {
         const cell = state.cells[r][c];
         const div = document.createElement('div');
-        // Fog Tiers: a foggy tile that's revealed-and-safe shows no clue at all - not an arrow,
-        // not a tie, not even the "near" proximity warning (which would itself leak "something's
-        // close" through fog). Decode can't target it either (see useDecodeAt's guard) - fog
-        // means genuinely no directional information, full stop, only the region count can
-        // narrow it down. state.fogOf is only set on the debug Fog Tiers test board.
-        const foggy = !!(state.fogOf && state.fogOf[r][c]);
-        const decoded = !foggy && cell.status === 'revealed' && cell.decodedWedges;
-        const near = !foggy && cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
-        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '') + (foggy && cell.status === 'revealed' ? ' fog' : '');
+        const decoded = cell.status === 'revealed' && cell.decodedWedges;
+        const near = cell.status === 'revealed' && nearestDistanceSquared(state.perm, state.n, r, c) <= NEAR_DISTANCE_SQUARED;
+        div.className = 'cell ' + cell.status + (cell.flagged ? ' flagged' : '') + (decoded ? ' decoded' : '') + (near ? ' near' : '');
         if (state.regionOf) {
           // A translucent inset shadow rather than a background color - paints over whatever
           // the cell's normal hidden/revealed/flagged background already is instead of fighting
-          // it, so region boundaries stay visible through every existing cell state.
+          // it, so zone boundaries stay visible through every existing cell state.
           div.style.boxShadow = `inset 0 0 0 999px ${REGION_COLORS[state.regionOf[r][c] % REGION_COLORS.length]}`;
         }
-        // Rotating Compass: a tile's arrow is rotated by ITS OWN region's rotation, never the
+        // Rotating Compass: a tile's arrow is rotated by ITS OWN zone's rotation, never the
         // critter's - see the design note above rotateGlyph(). state.regionRotation is only set
-        // when the current tier has rotationEnabled (debug test board only, for now).
+        // once a player has passed the classic ladder (or on the debug test board).
         const rotationSteps = state.regionRotation ? state.regionRotation[state.regionOf[r][c]] : 0;
         if (decoded) {
           div.textContent = cell.decodedWedges.map(i => ARROWS[(i + rotationSteps) % 8]).join('');
-        } else if (cell.status === 'revealed' && foggy) {
-          div.textContent = '░';
         } else if (cell.status === 'revealed') {
           div.textContent = rotateGlyph(state.grid[r][c], rotationSteps);
         } else if (cell.status === 'critter') {
@@ -1682,84 +1545,22 @@
     }
   }
 
-  // Region Tiers only - how many of each region's critters have been accounted for so far, via
-  // either a correct flag or an actual reveal (tap-loss, Sniff, autoComplete).
-  //
-  // Fixed 2026-09-22 - real exploit, caught in testing: this used to be rendered live in the
-  // legend as a found/target tally. Flagging has always been free and fully reversible with zero
-  // downside, so a live number that only ticks up on a CORRECT flag turned every tile into a
-  // free, risk-free oracle - flag it, check whether the number moved, unflag and try the next
-  // tile if not. That's the exact same information-leak shape the daily-quest "correctly flag a
-  // critter" bug was (see trackDailyQuestProgress's fix note), just reintroduced here. The result
-  // is now used ONLY internally, to drive the silent all-or-nothing auto-reveal in
-  // revealCompletedRegions() below - never rendered as a live per-flag signal. That mirrors how
-  // the pre-existing whole-board allCrittersFlaggedCorrectly()/autoCompleteRound() has always
-  // worked: no incremental feedback while flagging, only a single event once a full set (there,
-  // the whole board; here, one region) is genuinely completed through the player's own reasoning.
-  function regionFoundCounts() {
-    const counts = Array(state.regionCounts.length).fill(0);
-    if (!state.perm) return counts; // board not resolved yet - nothing can be "found"
-    for (let r = 0; r < state.n; r++) {
-      for (let c = 0; c < state.n; c++) {
-        if (state.perm[r] !== c) continue; // not a critter cell
-        const cell = state.cells[r][c];
-        if (cell.status === 'critter' || cell.flagged) counts[state.regionOf[r][c]]++;
-      }
-    }
-    return counts;
-  }
-
-  // Auto-reveals a region's remaining hidden tiles the instant every one of its critters has
-  // been accounted for - they're now provably safe, the same idea as
-  // allCrittersFlaggedCorrectly()/autoCompleteRound(), just scoped to one region instead of the
-  // whole board. A single all-or-nothing event, not incremental feedback (see the fix note on
-  // regionFoundCounts() above for why that distinction matters). Returns the list of {r,c} cells
-  // it revealed (empty if none) - tapCell() attaches this to its history entry so useRewind() can
-  // put these specific cells back to hidden too, not just the tile that was actually tapped.
-  function revealCompletedRegions() {
-    if (!state.regionOf || !state.regionCounts) return [];
-    const found = regionFoundCounts();
-    const revealedCells = [];
-    for (let regionId = 0; regionId < state.regionCounts.length; regionId++) {
-      if (found[regionId] !== state.regionCounts[regionId]) continue;
-      for (let r = 0; r < state.n; r++) {
-        for (let c = 0; c < state.n; c++) {
-          if (state.regionOf[r][c] !== regionId) continue;
-          const cell = state.cells[r][c];
-          if (cell.status === 'hidden' && !cell.flagged) {
-            cell.status = 'revealed';
-            state.revealed++;
-            revealedCells.push({ r, c });
-          }
-        }
-      }
-    }
-    return revealedCells;
-  }
-
-  // Region Tiers only - a color-swatch-to-count legend above the board. Shows ONLY the static
-  // target, never a live "found so far" number - see the 2026-09-22 fix note near
-  // regionFoundCounts(). Counts are fixed for the whole round, so this only needs to run once
-  // per startRound(), not on every state change.
+  // Rotation Tiers only - a color-swatch-to-rotation legend above the board, showing each zone's
+  // fixed rotation as a rotated arrow icon (tappable - see the click handler below - since the
+  // icon alone doesn't communicate anything on its own). No count of any kind - that was Region
+  // Tiers, scrapped 2026-09-22 (see the ROTATION_TIERS comment up top). Fixed for the whole
+  // round, so this only needs to run once per startRound(), not on every state change.
   function renderRegionLegend() {
-    if (!state.regionOf || !state.regionCounts) {
+    if (!state.regionOf || !state.regionRotation) {
       el.regionLegend.classList.add('hidden');
       el.regionLegend.innerHTML = '';
       return;
     }
     el.regionLegend.classList.remove('hidden');
-    el.regionLegend.innerHTML = state.regionCounts.map((count, id) => {
-      // Rotating Compass only - shows that region's fixed rotation as a rotated arrow glyph, so
-      // the info is always checkable (never hidden), same fairness bar as everything else here.
-      // Tappable (see the click handler below) since the icon alone doesn't explain the rule.
-      const rotation = state.regionRotation
-        ? `<span class="region-rotation" data-region-id="${id}" style="transform: rotate(${state.regionRotation[id] * 45}deg)">↑</span>`
-        : '';
-      return `
+    el.regionLegend.innerHTML = state.regionRotation.map((steps, id) => `
       <span class="region-swatch" style="background: ${REGION_COLORS[id % REGION_COLORS.length]}"></span
-      >${rotation}<span class="region-count">${count}</span>
-    `;
-    }).join('');
+      ><span class="region-rotation" data-region-id="${id}" style="transform: rotate(${steps * 45}deg)">↑</span>
+    `).join('');
   }
 
   // wedgeIndex counts counter-clockwise from East (see the ARROWS comment up top), but CSS
@@ -1921,9 +1722,8 @@
     el.debugDateVal.textContent =
       `Simulated date: ${todayDateString()}  ·  lastDecided: ${lastDecidedDate || '—'}  ·  lastExtend: ${lastExtendDate || '—'}  ·  streak: ${streak}`;
     el.debugExitTestBtn.classList.toggle('hidden', !debugForcedTier);
-    const debugModeLabel = debugForcedTier && (debugForcedTier.rotationEnabled ? 'Rotating Compass' : debugForcedTier.fogEnabled ? 'Fog Tiers' : 'Region Tier');
     el.debugTestModeVal.textContent = debugForcedTier
-      ? `🧪 Testing mode active (${debugModeLabel} board) - real progress (tierIndex ${tierIndex}, regionTierIndex ${regionTierIndex}) is untouched.`
+      ? `🧪 Testing mode active (Rotation Tier board) - real progress (tierIndex ${tierIndex}, rotationTierIndex ${rotationTierIndex}) is untouched.`
       : '';
   }
 
@@ -1933,27 +1733,15 @@
     showToast(`Debug: simulated date is now ${todayDateString()} — win or lose a round to see the streak react`);
   });
 
-  // Debug-only entry points into Region Tiers / Rotating Compass (2026-09-22) - lets these be
-  // tested directly without clearing the 36-level ladder. debugForcedTier is never persisted,
-  // so it can't corrupt a real save; every win/loss side effect is also skipped while it's set
-  // (see winRound() and the continueDeclineBtn handler) - this is a fully sandboxed test round.
-  el.debugRegionTestBtn.addEventListener('click', () => {
-    debugForcedTier = DEBUG_REGION_TEST_TIER;
-    updateDebugPanel();
-    startRound();
-    showToast('🧩 Each region\'s legend shows how many critters it contains. Correctly flag or reveal every one in a region and the rest of it auto-reveals as safe.');
-  });
+  // Debug-only entry point into Rotation Tiers (2026-09-22) - lets it be tested directly without
+  // clearing the 36-level ladder. debugForcedTier is never persisted, so it can't corrupt a real
+  // save; every win/loss side effect is also skipped while it's set (see winRound() and the
+  // continueDeclineBtn handler) - this is a fully sandboxed test round.
   el.debugRotationTestBtn.addEventListener('click', () => {
     debugForcedTier = DEBUG_ROTATION_TEST_TIER;
     updateDebugPanel();
     startRound();
-    showToast('🧭 Each region\'s arrows are rotated by a fixed amount, shown as a rotated icon in its legend entry (tap it anytime) — rotate what you see backward by that much to find the real direction.');
-  });
-  el.debugFogTestBtn.addEventListener('click', () => {
-    debugForcedTier = DEBUG_FOG_TEST_TIER;
-    updateDebugPanel();
-    startRound();
-    showToast('🌫️ A few tiles per region show no arrow at all when revealed - the region\'s count is the only way to figure those out, once the visible arrows run out.');
+    showToast('🧭 Each zone\'s arrows are rotated by a fixed amount, shown as a rotated icon in its legend entry - tap it to preview that zone\'s true directions.');
   });
   el.debugExitTestBtn.addEventListener('click', () => {
     debugForcedTier = null;
@@ -2215,7 +2003,7 @@
     streakShieldArmed, lifeWardArmed, lastExtendDate, lastDecidedDate,
     tutorialActive, tutorialStep, totalWins, dailyQuests, pendingMilestone,
     endlessStreak, bestEndlessStreak, endlessWinsTotal, pendingEndlessModeIntro, isEndlessMode: isEndlessMode(),
-    regionTierIndex, regionTierWins, REGION_TIERS, regionTiersUnlocking: regionTiersUnlocking(), currentTier: currentTier(),
+    rotationTierIndex, rotationTierWins, ROTATION_TIERS, rotationTiersUnlocking: rotationTiersUnlocking(), currentTier: currentTier(),
     debugForcedTier, pendingQuestProgress,
   });
 
