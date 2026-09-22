@@ -1599,11 +1599,19 @@
   }
 
   // Region Tiers only - how many of each region's critters have been accounted for so far, via
-  // either a correct flag or an actual reveal (tap-loss, Sniff, autoComplete). Computed live on
-  // every call rather than cached, since it changes on every flag/tap - this is what turns the
-  // region count from a passive fact into an active Minesweeper-style counting tool: watch a
-  // region's found/target tally, and once it hits target you know every remaining hidden tile
-  // in it is safe (see revealCompletedRegions()) without needing an arrow to confirm it.
+  // either a correct flag or an actual reveal (tap-loss, Sniff, autoComplete).
+  //
+  // Fixed 2026-09-22 - real exploit, caught in testing: this used to be rendered live in the
+  // legend as a found/target tally. Flagging has always been free and fully reversible with zero
+  // downside, so a live number that only ticks up on a CORRECT flag turned every tile into a
+  // free, risk-free oracle - flag it, check whether the number moved, unflag and try the next
+  // tile if not. That's the exact same information-leak shape the daily-quest "correctly flag a
+  // critter" bug was (see trackDailyQuestProgress's fix note), just reintroduced here. The result
+  // is now used ONLY internally, to drive the silent all-or-nothing auto-reveal in
+  // revealCompletedRegions() below - never rendered as a live per-flag signal. That mirrors how
+  // the pre-existing whole-board allCrittersFlaggedCorrectly()/autoCompleteRound() has always
+  // worked: no incremental feedback while flagging, only a single event once a full set (there,
+  // the whole board; here, one region) is genuinely completed through the player's own reasoning.
   function regionFoundCounts() {
     const counts = Array(state.regionCounts.length).fill(0);
     if (!state.perm) return counts; // board not resolved yet - nothing can be "found"
@@ -1620,8 +1628,8 @@
   // Auto-reveals a region's remaining hidden tiles the instant every one of its critters has
   // been accounted for - they're now provably safe, the same idea as
   // allCrittersFlaggedCorrectly()/autoCompleteRound(), just scoped to one region instead of the
-  // whole board. This is the actual payoff for watching the tally: a region hitting found=target
-  // is a genuine, zero-risk deduction, not just a status update. Returns the list of {r,c} cells
+  // whole board. A single all-or-nothing event, not incremental feedback (see the fix note on
+  // regionFoundCounts() above for why that distinction matters). Returns the list of {r,c} cells
   // it revealed (empty if none) - tapCell() attaches this to its history entry so useRewind() can
   // put these specific cells back to hidden too, not just the tile that was actually tapped.
   function revealCompletedRegions() {
@@ -1645,11 +1653,10 @@
     return revealedCells;
   }
 
-  // Region Tiers only - a color-swatch-to-tally legend above the board, since cramming a number
-  // badge into an arbitrary cell of each region would collide with that cell's own arrow/flag/
-  // critter content. found/target updates live as the round is played (see regionFoundCounts) -
-  // called from updateStats() and startRound(), not on every render(), since revealing a plain
-  // safe tile doesn't change any region's tally.
+  // Region Tiers only - a color-swatch-to-count legend above the board. Shows ONLY the static
+  // target, never a live "found so far" number - see the 2026-09-22 fix note near
+  // regionFoundCounts(). Counts are fixed for the whole round, so this only needs to run once
+  // per startRound(), not on every state change.
   function renderRegionLegend() {
     if (!state.regionOf || !state.regionCounts) {
       el.regionLegend.classList.add('hidden');
@@ -1657,7 +1664,6 @@
       return;
     }
     el.regionLegend.classList.remove('hidden');
-    const found = regionFoundCounts();
     el.regionLegend.innerHTML = state.regionCounts.map((count, id) => {
       // Rotating Compass only - shows that region's fixed rotation as a rotated arrow glyph, so
       // the info is always checkable (never hidden), same fairness bar as everything else here.
@@ -1665,10 +1671,9 @@
       const rotation = state.regionRotation
         ? `<span class="region-rotation" data-region-id="${id}" style="transform: rotate(${state.regionRotation[id] * 45}deg)">↑</span>`
         : '';
-      const complete = found[id] >= count;
       return `
       <span class="region-swatch" style="background: ${REGION_COLORS[id % REGION_COLORS.length]}"></span
-      >${rotation}<span class="region-count${complete ? ' region-complete' : ''}">${found[id]}/${count}${complete ? ' ✓' : ''}</span>
+      >${rotation}<span class="region-count">${count}</span>
     `;
     }).join('');
   }
@@ -1791,7 +1796,7 @@
     debugForcedTier = DEBUG_REGION_TEST_TIER;
     updateDebugPanel();
     startRound();
-    showToast('🧩 Each region\'s legend shows found/target critters — flag or reveal them all and the rest of that region auto-reveals as safe.');
+    showToast('🧩 Each region\'s legend shows how many critters it contains. Correctly flag or reveal every one in a region and the rest of it auto-reveals as safe.');
   });
   el.debugRotationTestBtn.addEventListener('click', () => {
     debugForcedTier = DEBUG_ROTATION_TEST_TIER;
