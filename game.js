@@ -106,6 +106,10 @@
     streak: document.getElementById('streakVal'),
     debugAdvanceDayBtn: document.getElementById('debugAdvanceDayBtn'),
     debugDateVal: document.getElementById('debugDateVal'),
+    debugRegionTestBtn: document.getElementById('debugRegionTestBtn'),
+    debugRotationTestBtn: document.getElementById('debugRotationTestBtn'),
+    debugExitTestBtn: document.getElementById('debugExitTestBtn'),
+    debugTestModeVal: document.getElementById('debugTestModeVal'),
     debugResetBtn: document.getElementById('debugResetBtn'),
     leaderboardBtn: document.getElementById('leaderboardBtn'),
     leaderboardOverlay: document.getElementById('leaderboardOverlay'),
@@ -167,7 +171,21 @@
   // last tier then just repeats indefinitely as the new Endless Mode.
   let regionTierIndex = 0;
   let regionTierWins = 0;
+
+  // Debug-only test boards (2026-09-22): dedicated entry points so Region Tiers and the still-
+  // experimental Rotating Compass mechanic (see rotateGlyph below) can be tested directly, on
+  // demand, without clearing the 36-level ladder and without touching real ladder/Region Tier
+  // progress. debugForcedTier is deliberately NOT persisted anywhere - a reload always drops
+  // back to wherever the player's real save actually is, so there's no way this leaves a trace.
+  // Every persistent side effect a normal round has (coins, streak, leaderboard, daily quests,
+  // ladder/region-tier advance) is skipped for as long as this is set - see winRound(),
+  // trackDailyQuestProgress(), and the continueDeclineBtn handler below.
+  const DEBUG_REGION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4 };
+  const DEBUG_ROTATION_TEST_TIER = { gridSize: 8, critterCount: 7, regionCount: 4, rotationEnabled: true };
+  let debugForcedTier = null;
+
   function currentTier() {
+    if (debugForcedTier) return debugForcedTier;
     return isEndlessMode()
       ? REGION_TIERS[Math.min(regionTierIndex, REGION_TIERS.length - 1)]
       : TIERS[Math.min(tierIndex, TIERS.length - 1)];
@@ -969,6 +987,25 @@
     return { regionOf, regionCounts: null, candidateSpace: allPerms };
   }
 
+  // --- Rotating Compass (debug pilot, locked design 2026-09-22, not yet on the real ladder) ---
+  // A region-modifier layered on top of Region Tiers, not a new placement/generation mechanic -
+  // the underlying perm/clue grid is generated exactly as always. Each region gets its own fixed
+  // rotation for the round (0/90/180/270deg only - "steps" below are counted in 45deg wedge
+  // units, so a step of 2 is a clean 90deg). THE RULE: a tile's displayed arrow is rotated by the
+  // rotation of the region the TILE ITSELF is in, never the critter's region - that's what forces
+  // tracking multiple independent offsets instead of one global fact (see the design discussion).
+  // Nothing here is ever hidden - render-time only, the true clue/perm never changes, so it stays
+  // exactly as fair as every other tier.
+  const ROTATION_STEPS = [0, 2, 4, 6];
+  function assignRegionRotations(regionCount) {
+    return Array.from({ length: regionCount }, () => ROTATION_STEPS[Math.floor(Math.random() * ROTATION_STEPS.length)]);
+  }
+  function rotateGlyph(glyph, steps) {
+    if (!steps || glyph === TIE) return glyph;
+    const idx = ARROWS.indexOf(glyph);
+    return idx < 0 ? glyph : ARROWS[(idx + steps) % 8];
+  }
+
   function startRound() {
     commitPendingQuestProgress();
     const tier = currentTier();
@@ -993,15 +1030,18 @@
       decodeArmed: false,
       regionOf: regionSetup ? regionSetup.regionOf : null,
       regionCounts: regionSetup ? regionSetup.regionCounts : null,
+      regionRotation: (regionSetup && tier.rotationEnabled) ? assignRegionRotations(tier.regionCount) : null,
     };
     el.total.textContent = state.total;
     el.critters.textContent = critterCount;
     const regionSuffix = tier.regionCount ? `, ${tier.regionCount} regions` : '';
-    el.level.textContent = !isEndlessMode()
-      ? `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`
-      : regionTiersUnlocking()
-        ? `🧩 Region Tier ${regionTierIndex + 1}/${REGION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters${regionSuffix}`
-        : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters${regionSuffix}`;
+    el.level.textContent = debugForcedTier
+      ? `🧪 Debug test board · ${n}×${n} · ${critterCount} critters${regionSuffix}${tier.rotationEnabled ? ' · rotating' : ''} (nothing here is saved)`
+      : !isEndlessMode()
+        ? `Level ${displayLevel()}/${TOTAL_LEVELS} · ${n}×${n} · ${critterCount} critter${critterCount === 1 ? '' : 's'}`
+        : regionTiersUnlocking()
+          ? `🧩 Region Tier ${regionTierIndex + 1}/${REGION_TIERS.length} · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${n}×${n} · ${critterCount} critters${regionSuffix}`
+          : `♾️ Endless Mode · Streak ${endlessStreak} (best ${bestEndlessStreak}) · ${endlessWinsTotal} lifetime wins · ${n}×${n} · ${critterCount} critters${regionSuffix}`;
     renderRegionLegend();
     updateStats();
     render();
@@ -1295,6 +1335,18 @@
 
   function winRound() {
     state.roundOver = true;
+    // Debug test board: acknowledge the win but touch nothing persistent - no coins, streak,
+    // leaderboard, daily quests, or ladder/Region Tier advance. Dismissing this overlay
+    // regenerates another board of the same forced tier (currentTier()'s override), not
+    // whatever the player's real progress would normally serve next.
+    if (debugForcedTier) {
+      updateStats();
+      setTimeout(() => {
+        el.winStats.textContent = `🧪 Debug board cleared — lives kept: ${state.lives}/${currentMaxLives()}\n(testing mode - nothing was saved)`;
+        el.winOverlay.classList.remove('hidden');
+      }, 300);
+      return;
+    }
     const stars = starsForRound();
     coins += stars; // 1 coin per star, per spec's proposal
     const streakDecidedToday = recordRoundResult(true);
@@ -1502,10 +1554,14 @@
           // it, so region boundaries stay visible through every existing cell state.
           div.style.boxShadow = `inset 0 0 0 999px ${REGION_COLORS[state.regionOf[r][c] % REGION_COLORS.length]}`;
         }
+        // Rotating Compass: a tile's arrow is rotated by ITS OWN region's rotation, never the
+        // critter's - see the design note above rotateGlyph(). state.regionRotation is only set
+        // when the current tier has rotationEnabled (debug test board only, for now).
+        const rotationSteps = state.regionRotation ? state.regionRotation[state.regionOf[r][c]] : 0;
         if (decoded) {
-          div.textContent = cell.decodedWedges.map(i => ARROWS[i]).join('');
+          div.textContent = cell.decodedWedges.map(i => ARROWS[(i + rotationSteps) % 8]).join('');
         } else if (cell.status === 'revealed') {
-          div.textContent = state.grid[r][c];
+          div.textContent = rotateGlyph(state.grid[r][c], rotationSteps);
         } else if (cell.status === 'critter') {
           div.textContent = ANIMALS[r % ANIMALS.length];
         } else if (cell.flagged) {
@@ -1528,10 +1584,17 @@
       return;
     }
     el.regionLegend.classList.remove('hidden');
-    el.regionLegend.innerHTML = state.regionCounts.map((count, id) => `
+    el.regionLegend.innerHTML = state.regionCounts.map((count, id) => {
+      // Rotating Compass only - shows that region's fixed rotation as a rotated arrow glyph, so
+      // the info is always checkable (never hidden), same fairness bar as everything else here.
+      const rotation = state.regionRotation
+        ? `<span class="region-rotation" style="transform: rotate(${state.regionRotation[id] * 45}deg)">↑</span>`
+        : '';
+      return `
       <span class="region-swatch" style="background: ${REGION_COLORS[id % REGION_COLORS.length]}"></span
-      ><span class="region-count">${count}</span>
-    `).join('');
+      >${rotation}<span class="region-count">${count}</span>
+    `;
+    }).join('');
   }
 
   el.newRoundBtn.addEventListener('click', () => {
@@ -1598,6 +1661,7 @@
 
   el.continueDeclineBtn.addEventListener('click', () => {
     el.continueOverlay.classList.add('hidden');
+    if (debugForcedTier) { startRound(); return; } // debug test board loss - nothing to persist, just regenerate
     const streakDecidedToday = recordRoundResult(false);
     if (!streakDecidedToday) showToast('🔥 Streak already safe for today — this loss doesn’t affect it.');
     endlessStreak = 0; // a real loss - no-op outside Endless Mode, since it's already 0 there
@@ -1618,12 +1682,36 @@
   function updateDebugPanel() {
     el.debugDateVal.textContent =
       `Simulated date: ${todayDateString()}  ·  lastDecided: ${lastDecidedDate || '—'}  ·  lastExtend: ${lastExtendDate || '—'}  ·  streak: ${streak}`;
+    el.debugExitTestBtn.classList.toggle('hidden', !debugForcedTier);
+    el.debugTestModeVal.textContent = debugForcedTier
+      ? `🧪 Testing mode active (${debugForcedTier.rotationEnabled ? 'Rotating Compass' : 'Region Tier'} board) - real progress (tierIndex ${tierIndex}, regionTierIndex ${regionTierIndex}) is untouched.`
+      : '';
   }
 
   el.debugAdvanceDayBtn.addEventListener('click', () => {
     debugDayOffset++;
     updateDebugPanel();
     showToast(`Debug: simulated date is now ${todayDateString()} — win or lose a round to see the streak react`);
+  });
+
+  // Debug-only entry points into Region Tiers / Rotating Compass (2026-09-22) - lets these be
+  // tested directly without clearing the 36-level ladder. debugForcedTier is never persisted,
+  // so it can't corrupt a real save; every win/loss side effect is also skipped while it's set
+  // (see winRound() and the continueDeclineBtn handler) - this is a fully sandboxed test round.
+  el.debugRegionTestBtn.addEventListener('click', () => {
+    debugForcedTier = DEBUG_REGION_TEST_TIER;
+    updateDebugPanel();
+    startRound();
+  });
+  el.debugRotationTestBtn.addEventListener('click', () => {
+    debugForcedTier = DEBUG_ROTATION_TEST_TIER;
+    updateDebugPanel();
+    startRound();
+  });
+  el.debugExitTestBtn.addEventListener('click', () => {
+    debugForcedTier = null;
+    updateDebugPanel();
+    startRound();
   });
 
   // Testing-only: wipes every localStorage key this game writes (save blob, tutorial/power-ups
@@ -1785,6 +1873,7 @@
   // right the instant it's placed, before the round - or even that tile - is actually revealed).
   // commitPendingQuestProgress() applies it once the round genuinely ends.
   function trackDailyQuestProgress(id, amount) {
+    if (debugForcedTier) return; // debug test board - never touch real quest progress
     pendingQuestProgress[id] = (pendingQuestProgress[id] || 0) + amount;
   }
 
@@ -1880,6 +1969,7 @@
     tutorialActive, tutorialStep, totalWins, dailyQuests, pendingMilestone,
     endlessStreak, bestEndlessStreak, endlessWinsTotal, pendingEndlessModeIntro, isEndlessMode: isEndlessMode(),
     regionTierIndex, regionTierWins, REGION_TIERS, regionTiersUnlocking: regionTiersUnlocking(), currentTier: currentTier(),
+    debugForcedTier, pendingQuestProgress,
   });
 
   // --- Onboarding tutorial (2026-09-21, expanded same day per feedback the first cut was too

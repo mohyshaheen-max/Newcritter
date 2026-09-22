@@ -141,6 +141,14 @@ h1 {
   border-radius: 4px;
   border: 1px solid var(--border);
 }
+/* Rotating Compass only - a small rotated arrow next to a region's swatch, showing that
+   region's fixed rotation for the round (see game.js renderRegionLegend). */
+.region-rotation {
+  display: inline-block;
+  font-size: 0.8rem;
+  margin: 0 2px;
+  transform-origin: center;
+}
 .region-count {
   display: inline-flex;
   align-items: center;
